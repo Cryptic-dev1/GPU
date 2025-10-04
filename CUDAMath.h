@@ -4,11 +4,13 @@
 #include <cstdint>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+#include "CUDAStructures.h"
 
 #define NBBLOCK 5
 #define BIFULLSIZE 40
+#define WARP_SIZE 32
 
-// PTX Assembly Macros for Arithmetic
+// PTX Assembly Macros
 #define UADDO(c, a, b) asm volatile ("add.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADDC(c, a, b) asm volatile ("addc.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADD(c, a, b) asm volatile ("addc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b))
@@ -33,11 +35,11 @@
 __device__ __constant__ uint64_t MM64 = 0xD838091DD2253531ULL;
 __device__ __constant__ uint64_t MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 
-#define _IsPositive(x) (((int64_t)(x[4])) >= 0LL)
-#define _IsNegative(x) (((int64_t)(x[4])) < 0LL)
-#define _IsEqual(a, b) ((a[4] == b[4]) && (a[3] == b[3]) && (a[2] == b[2]) && (a[1] == b[1]) && (a[0] == b[0]))
-#define _IsZero(a) ((a[4] | a[3] | a[2] | a[1] | a[0]) == 0ULL)
-#define _IsOne(a) ((a[4] == 0ULL) && (a[3] == 0ULL) && (a[2] == 0ULL) && (a[1] == 0ULL) && (a[0] == 1ULL))
+#define _IsPositive(x) (((int64_t)(x[3])) >= 0LL)
+#define _IsNegative(x) (((int64_t)(x[3])) < 0LL)
+#define _IsEqual(a, b) ((a[3] == b[3]) && (a[2] == b[2]) && (a[1] == b[1]) && (a[0] == b[0]))
+#define _IsZero(a) ((a[3] | a[2] | a[1] | a[0]) == 0ULL)
+#define _IsOne(a) ((a[3] == 0ULL) && (a[2] == 0ULL) && (a[1] == 0ULL) && (a[0] == 1ULL))
 
 #define IDX threadIdx.x
 
@@ -45,6 +47,13 @@ __device__ __constant__ uint64_t MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 
 #define __sright128(a, b, n) ((a) >> (n)) | ((b) << (64 - (n)))
 #define __sleft128(a, b, n) ((b) << (n)) | ((a) >> (64 - (n)))
+
+#define AddP(r) { \
+    UADDO1(r[0], c_p[0]); \
+    UADDC1(r[1], c_p[1]); \
+    UADDC1(r[2], c_p[2]); \
+    UADD1(r[3], c_p[3]); \
+}
 
 // Field Utility Functions
 __device__ void fieldSetZero(uint64_t a[4]) {
@@ -108,6 +117,39 @@ __device__ void lsr256(uint64_t a[4], uint64_t out[4], int n) {
     }
 }
 
+__device__ void lsl512(const uint64_t a[4], int n, uint64_t out[8]) {
+    fieldSetZero(out);
+    int limb = n / 64;
+    int shift = n % 64;
+    for (int i = 0; i < 4; ++i) {
+        if (i + limb < 8) {
+            out[i + limb] = a[i] << shift;
+            if (shift && i + limb + 1 < 8) {
+                out[i + limb + 1] |= a[i] >> (64 - shift);
+            }
+        }
+    }
+}
+
+__device__ bool ge512(const uint64_t a[8], const uint64_t b[8]) {
+    for (int i = 7; i >= 0; --i) {
+        if (a[i] > b[i]) return true;
+        if (a[i] < b[i]) return false;
+    }
+    return true;
+}
+
+__device__ void sub512(const uint64_t a[8], const uint64_t b[8], uint64_t out[8]) {
+    uint64_t borrow = 0, temp;
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        USUBO(temp, a[i], b[i]);
+        USUB1(temp, borrow);
+        out[i] = temp;
+        borrow = (temp > a[i] || (temp == a[i] && b[i] != 0)) ? 1 : 0;
+    }
+}
+
 // Optimized Field Operations
 __device__ void fieldAdd_opt(const uint64_t a[4], const uint64_t b[4], uint64_t out[4]) {
     uint64_t carry = 0, temp;
@@ -156,19 +198,33 @@ __device__ void mul256(const uint64_t a[4], const uint64_t b[4], uint64_t out[8]
             UADDO(lo, lo, carry);
             UADD1(hi, 0);
             UADDO(out[i+j], out[i+j], lo);
-            UADDC(carry, out[i+j+1], hi);
-            out[i+j+1] = carry;
+            UADDC(out[i+j+1], out[i+j+1], hi);
             carry = (out[i+j+1] < hi) ? 1 : 0;
         }
         if (i + 4 < 8) out[i+4] += carry;
     }
 }
 
-__device__ void mul_high(const uint64_t a[4], const uint64_t b[4], uint64_t high[4]) {
-    uint64_t prod[8];
-    mul256(a, b, prod);
+__device__ void mul_high(const uint64_t a[4], const uint64_t b[5], uint64_t high[5]) {
+    uint64_t prod[9] = {0};
     #pragma unroll
-    for (int i = 0; i < 4; ++i) high[i] = prod[i+4];
+    for (int i = 0; i < 4; ++i) {
+        uint64_t carry = 0;
+        #pragma unroll
+        for (int j = 0; j < 5; ++j) {
+            uint64_t lo, hi;
+            UMULLO(lo, a[i], b[j]);
+            UMULHI(hi, a[i], b[j]);
+            UADDO(lo, lo, carry);
+            UADD1(hi, 0);
+            UADDO(prod[i+j], prod[i+j], lo);
+            UADDC(prod[i+j+1], prod[i+j+1], hi);
+            carry = (prod[i+j+1] < hi) ? 1 : 0;
+        }
+        if (i + 5 < 9) prod[i+5] += carry;
+    }
+    #pragma unroll
+    for (int i = 0; i < 5; ++i) high[i] = prod[i+4];
 }
 
 __device__ void modred_barrett_opt(const uint64_t input[8], uint64_t out[4]) {
@@ -258,43 +314,6 @@ __device__ void div512_256(const uint64_t num[8], const uint64_t den[4], uint64_
     fieldCopy(dividend, rem);
 }
 
-__device__ void lsl512(const uint64_t a[4], int n, uint64_t out[8]) {
-    fieldSetZero(out);
-    int limb = n / 64;
-    int shift = n % 64;
-    for (int i = 0; i < 4; ++i) {
-        if (i + limb < 8) {
-            out[i + limb] = a[i] << shift;
-            if (shift && i + limb + 1 < 8) {
-                out[i + limb + 1] |= a[i] >> (64 - shift);
-            }
-        }
-    }
-}
-
-__device__ bool ge512(const uint64_t a[8], const uint64_t b[8]) {
-    for (int i = 7; i >= 0; --i) {
-        if (a[i] > b[i]) return true;
-        if (a[i] < b[i]) return false;
-    }
-    return true;
-}
-
-__device__ void sub512(const uint64_t a[8], const uint64_t b[8], uint64_t out[8]) {
-    uint64_t borrow = 0, temp;
-    #pragma unroll
-    for (int i = 0; i < 8; ++i) {
-        USUBO(temp, a[i], b[i]);
-        USUB1(temp, borrow);
-        out[i] = temp;
-        borrow = (temp > a[i] || (temp == a[i] && b[i] != 0)) ? 1 : 0;
-    }
-}
-
-__device__ void mul512(const uint64_t a[4], const uint64_t b[4], uint64_t out[8]) {
-    mul256(a, b, out); // Simplified, can extend for full 512-bit
-}
-
 // GLV Endomorphism
 __device__ void split_glv(const uint64_t scalar[4], uint64_t k1[4], uint64_t k2[4]) {
     uint64_t num[8], half_n[4], q1[4], q2[4], tmp1[4], tmp2[4], rem[4];
@@ -326,12 +345,6 @@ __device__ void split_glv(const uint64_t scalar[4], uint64_t k1[4], uint64_t k2[
 }
 
 // Jacobian Point Operations
-struct ECPointA {
-    uint64_t X[4];
-    uint64_t Y[4];
-    bool infinity;
-};
-
 __device__ void pointSetInfinity(JacobianPoint &P) {
     fieldSetZero(P.x);
     fieldSetZero(P.y);
@@ -366,26 +379,26 @@ __device__ void pointDoubleJacobian(const JacobianPoint &P, JacobianPoint &R) {
         return;
     }
     uint64_t u[4], m[4], s[4], t[4], zz[4], tmp[4];
-    fieldSqr_opt(P.y, u); // u = y^2
-    fieldSqr_opt(P.z, zz); // zz = z^2
-    fieldSqr_opt(u, t); // t = y^4
-    fieldMul_opt(P.x, u, s); // s = x*y^2
-    fieldAdd_opt(s, s, s); // s = 2*x*y^2
-    fieldSqr_opt(P.x, tmp); // tmp = x^2
+    fieldSqr_opt(P.y, u);
+    fieldSqr_opt(P.z, zz);
+    fieldSqr_opt(u, t);
+    fieldMul_opt(P.x, u, s);
+    fieldAdd_opt(s, s, s);
+    fieldSqr_opt(P.x, tmp);
     fieldAdd_opt(tmp, tmp, m);
-    fieldAdd_opt(m, tmp, m); // m = 3*x^2
-    fieldSqr_opt(m, R.x); // R.x = m^2
+    fieldAdd_opt(m, tmp, m);
+    fieldSqr_opt(m, R.x);
     fieldSub_opt(R.x, s, R.x);
-    fieldSub_opt(R.x, s, R.x); // R.x = m^2 - 2*s
+    fieldSub_opt(R.x, s, R.x);
     fieldAdd_opt(P.y, P.z, R.z);
     fieldSqr_opt(R.z, R.z);
     fieldSub_opt(R.z, u, R.z);
-    fieldSub_opt(R.z, zz, R.z); // R.z = (y+z)^2 - y^2 - z^2 = 2*y*z
+    fieldSub_opt(R.z, zz, R.z);
     fieldSub_opt(s, R.x, tmp);
     fieldMul_opt(m, tmp, R.y);
     fieldAdd_opt(t, t, tmp);
     fieldAdd_opt(tmp, tmp, tmp);
-    fieldSub_opt(R.y, tmp, R.y); // R.y = m*(s - R.x) - 8*y^4
+    fieldSub_opt(R.y, tmp, R.y);
     R.infinity = false;
 }
 
@@ -516,8 +529,8 @@ __device__ void scalarMulBaseJacobian(const uint64_t scalar_le[4], uint64_t outX
         uint32_t w1 = get_window(k1, pos);
         if (w1) {
             JacobianPoint P;
-            fieldCopy(c_pre_Gx + w1 * 4, P.x);
-            fieldCopy(c_pre_Gy + w1 * 4, P.y);
+            fieldCopy(d_pre_Gx + w1 * 4, P.x);
+            fieldCopy(d_pre_Gy + w1 * 4, P.y);
             fieldSetOne(P.z);
             P.infinity = false;
             pointAddMixed(R1, P.x, P.y, P.infinity, R1);
@@ -525,8 +538,8 @@ __device__ void scalarMulBaseJacobian(const uint64_t scalar_le[4], uint64_t outX
         uint32_t w2 = get_window(k2, pos);
         if (w2) {
             JacobianPoint P;
-            fieldCopy(c_pre_phiGx + w2 * 4, P.x);
-            fieldCopy(c_pre_phiGy + w2 * 4, P.y);
+            fieldCopy(d_pre_phiGx + w2 * 4, P.x);
+            fieldCopy(d_pre_phiGy + w2 * 4, P.y);
             fieldSetOne(P.z);
             P.infinity = false;
             pointAddMixed(R2, P.x, P.y, P.infinity, R2);
@@ -541,6 +554,21 @@ __global__ void scalarMulKernelBase(const uint64_t* scalars_in, uint64_t* outX, 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N) return;
     scalarMulBaseJacobian(scalars_in + idx*4, outX + idx*4, outY + idx*4);
+}
+
+__global__ void precompute_table_kernel(JacobianPoint base, uint64_t* pre_x, uint64_t* pre_y, uint64_t size) {
+    uint64_t idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    JacobianPoint P = base;
+    for (uint64_t bit = 0; bit < idx; ++bit) {
+        if (bit % 2 == 0) {
+            pointDoubleJacobian(P, P);
+        } else {
+            pointAddJacobian(P, base, P);
+        }
+    }
+    fieldCopy(P.x, pre_x + idx * 4);
+    fieldCopy(P.y, pre_y + idx * 4);
 }
 
 #endif // CUDA_MATH_H

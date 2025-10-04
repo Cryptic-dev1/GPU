@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
-#include <cstring>
 
 __device__ __forceinline__ uint32_t ror32(uint32_t x, int n) {
 #if __CUDA_ARCH__ >= 350
@@ -13,7 +12,6 @@ __device__ __forceinline__ uint32_t ror32(uint32_t x, int n) {
 }
 
 __device__ __forceinline__ uint32_t rol32(uint32_t x, int n) { return ror32(x, 32 - n); }
-
 __device__ __forceinline__ uint32_t bigS0(uint32_t x) { return ror32(x, 2) ^ ror32(x, 13) ^ ror32(x, 22); }
 __device__ __forceinline__ uint32_t bigS1(uint32_t x) { return ror32(x, 6) ^ ror32(x, 11) ^ ror32(x, 25); }
 __device__ __forceinline__ uint32_t smallS0(uint32_t x) { return ror32(x, 7) ^ ror32(x, 18) ^ (x >> 3); }
@@ -204,10 +202,6 @@ __device__ void getHash160_33_from_limbs(uint8_t prefix02_03, const uint64_t x_b
 __device__ void getHash160_33bytes(const uint8_t* pubkey33, uint8_t hash20[20]) {
     uint8_t sha[32];
     getSHA256_33bytes(pubkey33, sha);
-    getRIPEMD160_32bytes(sha, hash20);
-}
-
-__device__ void getRIPEMD160_32bytes(const uint8_t* sha, uint8_t ripemd20[20]) {
     uint32_t W[16], s[5];
     #pragma unroll
     for (int i = 0; i < 8; ++i) {
@@ -219,10 +213,10 @@ __device__ void getRIPEMD160_32bytes(const uint8_t* sha, uint8_t ripemd20[20]) {
     RIPEMD160Transform(s, W);
     #pragma unroll
     for (int i = 0; i < 5; ++i) {
-        ripemd20[4*i+0] = (uint8_t)(s[i] >> 0);
-        ripemd20[4*i+1] = (uint8_t)(s[i] >> 8);
-        ripemd20[4*i+2] = (uint8_t)(s[i] >> 16);
-        ripemd20[4*i+3] = (uint8_t)(s[i] >> 24);
+        hash20[4*i+0] = (uint8_t)(s[i] >> 0);
+        hash20[4*i+1] = (uint8_t)(s[i] >> 8);
+        hash20[4*i+2] = (uint8_t)(s[i] >> 16);
+        hash20[4*i+3] = (uint8_t)(s[i] >> 24);
     }
 }
 
@@ -236,7 +230,6 @@ __device__ void addBigEndian32(uint8_t* data32, uint64_t offset) {
     data32[31] = (uint8_t)current;
 }
 
-// Batch hashing for multiple public keys
 __device__ void batch_getHash160_33bytes(const uint8_t* pubkeys, uint8_t* hashes, int n) {
     extern __shared__ uint32_t shared[];
     uint32_t *s_state = shared;
@@ -263,7 +256,24 @@ __device__ void batch_getHash160_33bytes(const uint8_t* pubkeys, uint8_t* hashes
             sha[4*i+2] = (uint8_t)(state[i] >> 8);
             sha[4*i+3] = (uint8_t)(state[i]);
         }
-        getRIPEMD160_32bytes(sha, hash);
+        uint32_t W_ripe[16];
+        #pragma unroll
+        for (int i = 0; i < 8; ++i) {
+            W_ripe[i] = ((uint32_t)sha[4*i] << 24) | ((uint32_t)sha[4*i+1] << 16) |
+                        ((uint32_t)sha[4*i+2] << 8) | sha[4*i+3];
+        }
+        W_ripe[8] = 0x00000080; W_ripe[9] = W_ripe[10] = W_ripe[11] = W_ripe[12] = W_ripe[13] = 0;
+        W_ripe[14] = 256; W_ripe[15] = 0;
+        uint32_t s[5];
+        RIPEMD160Initialize(s);
+        RIPEMD160Transform(s, W_ripe);
+        #pragma unroll
+        for (int i = 0; i < 5; ++i) {
+            hash[4*i+0] = (uint8_t)(s[i] >> 0);
+            hash[4*i+1] = (uint8_t)(s[i] >> 8);
+            hash[4*i+2] = (uint8_t)(s[i] >> 16);
+            hash[4*i+3] = (uint8_t)(s[i] >> 24);
+        }
     }
     __syncthreads();
 }

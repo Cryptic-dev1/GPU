@@ -34,15 +34,43 @@ __device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found
     return f == FOUND_READY;
 }
 
+__device__ __forceinline__ void inc256_device(uint64_t a[4], uint64_t inc) {
+    unsigned __int128 cur = (unsigned __int128)a[0] + inc;
+    a[0] = (uint64_t)cur;
+    uint64_t carry = (uint64_t)(cur >> 64);
+    for (int i = 1; i < 4 && carry; ++i) {
+        cur = (unsigned __int128)a[i] + carry;
+        a[i] = (uint64_t)cur;
+        carry = (uint64_t)(cur >> 64);
+    }
+}
+
+__device__ __forceinline__ void sub256_u64_inplace(uint64_t a[4], uint64_t dec) {
+    uint64_t borrow = (a[0] < dec) ? 1ULL : 0ULL;
+    a[0] = a[0] - dec;
+    #pragma unroll
+    for (int i = 1; i < 4; ++i) {
+        uint64_t ai = a[i];
+        uint64_t bi = borrow;
+        a[i] = ai - bi;
+        borrow = (ai < bi) ? 1ULL : 0ULL;
+        if (!borrow) break;
+    }
+}
+
+__device__ __forceinline__ unsigned long long warp_reduce_add_ull(unsigned long long v) {
+    unsigned mask = 0xFFFFFFFFu;
+    v += __shfl_down_sync(mask, v, 16);
+    v += __shfl_down_sync(mask, v, 8);
+    v += __shfl_down_sync(mask, v, 4);
+    v += __shfl_down_sync(mask, v, 2);
+    v += __shfl_down_sync(mask, v, 1);
+    return v;
+}
+
 #ifndef MAX_BATCH_SIZE
 #define MAX_BATCH_SIZE 1024
 #endif
-#ifndef WARP_SIZE
-#define WARP_SIZE 32
-#endif
-
-__constant__ uint64_t c_Gx[(MAX_BATCH_SIZE/2) * 4];
-__constant__ uint64_t c_Gy[(MAX_BATCH_SIZE/2) * 4];
 
 __launch_bounds__(256, 2)
 __global__ void fused_ec_hash(
@@ -219,6 +247,19 @@ void precompute_g_table_gpu(JacobianPoint base, JacobianPoint phi_base, uint64_t
     precompute_table_kernel<<<blocks, threads>>>(base, *d_pre_Gx, *d_pre_Gy, PRECOMPUTE_SIZE);
     precompute_table_kernel<<<blocks, threads>>>(phi_base, *d_pre_phiGx, *d_pre_phiGy, PRECOMPUTE_SIZE);
     CUDA_CHECK(cudaDeviceSynchronize());
+}
+
+std::string human_bytes(size_t bytes) {
+    const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+    int unit_idx = 0;
+    double size = static_cast<double>(bytes);
+    while (size >= 1024 && unit_idx < 4) {
+        size /= 1024;
+        unit_idx++;
+    }
+    std::stringstream ss;
+    ss << std::fixed << std::setprecision(2) << size << " " << units[unit_idx];
+    return ss.str();
 }
 
 void print_gpu_info(const cudaDeviceProp& prop, int blocks, int threadsPerBlock, int batch_size, uint64_t threadsTotal) {
@@ -522,4 +563,10 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(d_pre_Gx));
     CUDA_CHECK(cudaFree(d_pre_Gy));
     CUDA_CHECK(cudaFree(d_pre_phiGx));
-   
+    CUDA_CHECK(cudaFree(d_pre_phiGy));
+    if (h_start_scalars) CUDA_CHECK(cudaFreeHost(h_start_scalars));
+    if (h_counts256) CUDA_CHECK(cudaFreeHost(h_counts256));
+    CUDA_CHECK(cudaStreamDestroy(streamKernel));
+
+    return exit_code;
+}

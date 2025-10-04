@@ -63,6 +63,6 @@ __global__ void fused_ec_hash(
     int* d_found_flag, FoundResult* d_found_result, unsigned long long* hashes_accum,
     unsigned int* d_any_left
 );
-__global__ void precompute_table_kernel(JacobianPoint base, uint64_t* pre_x, uint64_t* pre_y, int size);
+__global__ void precompute_table_kernel(JacobianPoint base, uint64_t* pre_x, uint64_t* pre_y, uint64_t size);
 
 #endif // CUDA_STRUCTURES_H
