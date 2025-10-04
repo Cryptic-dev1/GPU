@@ -5,6 +5,7 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include "CUDAStructures.h"
+#include "CUDAUtils.h"
 
 #define NBBLOCK 5
 #define BIFULLSIZE 40
