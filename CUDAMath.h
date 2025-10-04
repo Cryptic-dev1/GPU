@@ -72,19 +72,6 @@ __device__ void fieldCopy(const uint64_t a[4], uint64_t b[4]) {
     for (int i = 0; i < 4; ++i) b[i] = a[i];
 }
 
-__device__ bool ge256(const uint64_t a[4], const uint64_t b[4]) {
-    for (int i = 3; i >= 0; --i) {
-        if (a[i] > b[i]) return true;
-        if (a[i] < b[i]) return false;
-    }
-    return true;
-}
-
-__device__ bool ge256_u64(const uint64_t a[4], uint64_t b) {
-    if (a[3] | a[2] | a[1]) return true;
-    return a[0] >= b;
-}
-
 __device__ void lsl256(uint64_t a[4], uint64_t out[4], int n) {
     if (n >= 256) {
         fieldSetZero(out);
@@ -207,9 +194,10 @@ __device__ void mul256(const uint64_t a[4], const uint64_t b[4], uint64_t out[8]
 
 __device__ void mul_high(const uint64_t a[4], const uint64_t b[5], uint64_t high[5]) {
     uint64_t prod[9] = {0};
+    uint64_t carry;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        uint64_t carry = 0;
+        carry = 0;
         #pragma unroll
         for (int j = 0; j < 5; ++j) {
             uint64_t lo, hi;
@@ -511,7 +499,7 @@ __device__ uint32_t get_window(const uint64_t a[4], int pos) {
     return bits & ((1ULL << PRECOMPUTE_WINDOW) - 1);
 }
 
-__device__ void scalarMulBaseJacobian(const uint64_t scalar_le[4], uint64_t outX[4], uint64_t outY[4]) {
+__device__ void scalarMulBaseJacobian(const uint64_t scalar_le[4], uint64_t outX[4], uint64_t outY[4], uint64_t* d_pre_Gx, uint64_t* d_pre_Gy, uint64_t* d_pre_phiGx, uint64_t* d_pre_phiGy) {
     uint64_t k1[4], k2[4];
     split_glv(scalar_le, k1, k2);
     JacobianPoint R1, R2, R;
@@ -550,10 +538,10 @@ __device__ void scalarMulBaseJacobian(const uint64_t scalar_le[4], uint64_t outX
     pointToAffine(R, outX, outY);
 }
 
-__global__ void scalarMulKernelBase(const uint64_t* scalars_in, uint64_t* outX, uint64_t* outY, int N) {
+__global__ void scalarMulKernelBase(const uint64_t* scalars_in, uint64_t* outX, uint64_t* outY, int N, uint64_t* d_pre_Gx, uint64_t* d_pre_Gy, uint64_t* d_pre_phiGx, uint64_t* d_pre_phiGy) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N) return;
-    scalarMulBaseJacobian(scalars_in + idx*4, outX + idx*4, outY + idx*4);
+    scalarMulBaseJacobian(scalars_in + idx*4, outX + idx*4, outY + idx*4, d_pre_Gx, d_pre_Gy, d_pre_phiGx, d_pre_phiGy);
 }
 
 __global__ void precompute_table_kernel(JacobianPoint base, uint64_t* pre_x, uint64_t* pre_y, uint64_t size) {

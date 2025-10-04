@@ -30,10 +30,14 @@ __device__ __constant__ uint64_t Gy_d[4] = {0x4fe342e2, 0xe0fa9e5b, 0x7c0cad3c, 
 // Precomputed tables (2^24 = 16,777,216 points, ~1GB per table)
 #define PRECOMPUTE_WINDOW 24
 #define PRECOMPUTE_SIZE (1LL << PRECOMPUTE_WINDOW)
-__global__ uint64_t* d_pre_Gx;    // Dynamically allocated on device
-__global__ uint64_t* d_pre_Gy;
-__global__ uint64_t* d_pre_phiGx;
-__global__ uint64_t* d_pre_phiGy;
+__device__ uint64_t* d_pre_Gx;    // Dynamically allocated on device
+__device__ uint64_t* d_pre_Gy;
+__device__ uint64_t* d_pre_phiGx;
+__device__ uint64_t* d_pre_phiGy;
+
+// Batch point tables for fused_ec_hash
+__device__ __constant__ uint64_t c_Gx[(MAX_BATCH_SIZE/2) * 4];
+__device__ __constant__ uint64_t c_Gy[(MAX_BATCH_SIZE/2) * 4];
 
 // secp256k1 constants (little-endian)
 __device__ __constant__ uint64_t c_p[4] = {0xfffffc2f, 0xffffffff, 0xffffffff, 0xffffffff};
@@ -56,7 +60,13 @@ __device__ int found_flag = 0;
 #define CUDA_CHECK(ans) do { cudaError_t err = ans; if (err != cudaSuccess) { \
     std::cerr << "CUDA Error: " << cudaGetErrorString(err) << " at " << __FILE__ << ":" << __LINE__ << std::endl; exit(EXIT_FAILURE); } } while(0)
 
-__global__ void scalarMulKernelBase(const uint64_t* scalars_in, uint64_t* outX, uint64_t* outY, int N);
+// Common utility function to avoid redefinition
+__device__ bool ge256_u64(const uint64_t a[4], uint64_t b) {
+    if (a[3] | a[2] | a[1]) return true;
+    return a[0] >= b;
+}
+
+__global__ void scalarMulKernelBase(const uint64_t* scalars_in, uint64_t* outX, uint64_t* outY, int N, uint64_t* d_pre_Gx, uint64_t* d_pre_Gy, uint64_t* d_pre_phiGx, uint64_t* d_pre_phiGy);
 __global__ void fused_ec_hash(
     JacobianPoint* P, JacobianPoint* R, uint64_t* start_scalars, uint64_t* counts256,
     uint64_t threadsTotal, uint32_t batch_size, uint32_t max_batches_per_launch,

@@ -34,44 +34,6 @@ __device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found
     return f == FOUND_READY;
 }
 
-__device__ __forceinline__ void inc256_device(uint64_t a[4], uint64_t inc) {
-    unsigned __int128 cur = (unsigned __int128)a[0] + inc;
-    a[0] = (uint64_t)cur;
-    uint64_t carry = (uint64_t)(cur >> 64);
-    for (int i = 1; i < 4 && carry; ++i) {
-        cur = (unsigned __int128)a[i] + carry;
-        a[i] = (uint64_t)cur;
-        carry = (uint64_t)(cur >> 64);
-    }
-}
-
-__device__ __forceinline__ void sub256_u64_inplace(uint64_t a[4], uint64_t dec) {
-    uint64_t borrow = (a[0] < dec) ? 1ULL : 0ULL;
-    a[0] = a[0] - dec;
-    #pragma unroll
-    for (int i = 1; i < 4; ++i) {
-        uint64_t ai = a[i];
-        uint64_t bi = borrow;
-        a[i] = ai - bi;
-        borrow = (ai < bi) ? 1ULL : 0ULL;
-        if (!borrow) break;
-    }
-}
-
-__device__ __forceinline__ unsigned long long warp_reduce_add_ull(unsigned long long v) {
-    unsigned mask = 0xFFFFFFFFu;
-    v += __shfl_down_sync(mask, v, 16);
-    v += __shfl_down_sync(mask, v, 8);
-    v += __shfl_down_sync(mask, v, 4);
-    v += __shfl_down_sync(mask, v, 2);
-    v += __shfl_down_sync(mask, v, 1);
-    return v;
-}
-
-#ifndef MAX_BATCH_SIZE
-#define MAX_BATCH_SIZE 1024
-#endif
-
 __launch_bounds__(256, 2)
 __global__ void fused_ec_hash(
     JacobianPoint* __restrict__ P,
@@ -123,10 +85,8 @@ __global__ void fused_ec_hash(
     }
 
     uint32_t batches_done = 0;
-    extern __shared__ uint32_t shared[];
-    uint32_t *s_state = shared;
-    uint32_t *s_ripe_state = shared + (WARP_SIZE * 8);
-    uint64_t *z_values = (uint64_t*)(shared + (WARP_SIZE * 8 + WARP_SIZE * 5));
+    extern __shared__ uint64_t shared_mem[];
+    uint64_t* z_values = shared_mem;
 
     while (batches_done < max_batches_per_launch && ge256_u64(rem, (uint64_t)B)) {
         if (warp_found_ready(d_found_flag, full_mask, lane)) {
@@ -208,6 +168,19 @@ __global__ void fused_ec_hash(
     WARP_FLUSH_HASHES();
 }
 
+std::string human_bytes(size_t bytes) {
+    const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+    int unit_idx = 0;
+    double size = static_cast<double>(bytes);
+    while (size >= 1024 && unit_idx < 4) {
+        size /= 1024;
+        unit_idx++;
+    }
+    std::stringstream ss;
+    ss << std::fixed << std::setprecision(2) << size << " " << units[unit_idx];
+    return ss.str();
+}
+
 void precompute_batch_points(uint64_t* h_Gx, uint64_t* h_Gy, int batch_size) {
     JacobianPoint G, tmp;
     fieldCopy(Gx_d, G.x);
@@ -247,19 +220,6 @@ void precompute_g_table_gpu(JacobianPoint base, JacobianPoint phi_base, uint64_t
     precompute_table_kernel<<<blocks, threads>>>(base, *d_pre_Gx, *d_pre_Gy, PRECOMPUTE_SIZE);
     precompute_table_kernel<<<blocks, threads>>>(phi_base, *d_pre_phiGx, *d_pre_phiGy, PRECOMPUTE_SIZE);
     CUDA_CHECK(cudaDeviceSynchronize());
-}
-
-std::string human_bytes(size_t bytes) {
-    const char* units[] = {"B", "KB", "MB", "GB", "TB"};
-    int unit_idx = 0;
-    double size = static_cast<double>(bytes);
-    while (size >= 1024 && unit_idx < 4) {
-        size /= 1024;
-        unit_idx++;
-    }
-    std::stringstream ss;
-    ss << std::fixed << std::setprecision(2) << size << " " << units[unit_idx];
-    return ss.str();
 }
 
 void print_gpu_info(const cudaDeviceProp& prop, int blocks, int threadsPerBlock, int batch_size, uint64_t threadsTotal) {
@@ -384,7 +344,8 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_prefix, &target_prefix, sizeof(target_prefix)));
 
     // Allocate device memory
-    uint64_t *d_start_scalars, *d_counts256, *d_hashes_accum;
+    uint64_t *d_start_scalars, *d_counts256;
+    unsigned long long *d_hashes_accum;
     int *d_found_flag;
     unsigned int *d_any_left;
     FoundResult *d_found_result;
@@ -408,7 +369,7 @@ int main(int argc, char* argv[]) {
         add256_u64(range_start, threadsTotal, end_plus_1);
         uint64_t count[4];
         sub256(range_end, h_start_scalars + i * 4, count);
-        if (ge256(end_plus_1, range_end)) {
+        if (ge256_u64(end_plus_1, range_end[0])) {
             uint64_t remaining[4];
             sub256(end_plus_1, range_end, remaining);
             sub256(count, remaining, count);
@@ -422,7 +383,7 @@ int main(int argc, char* argv[]) {
     uint64_t *d_outX, *d_outY;
     CUDA_CHECK(cudaMalloc(&d_outX, threadsTotal * 4 * sizeof(uint64_t)));
     CUDA_CHECK(cudaMalloc(&d_outY, threadsTotal * 4 * sizeof(uint64_t)));
-    scalarMulKernelBase<<<blocks, threadsPerBlock>>>(d_start_scalars, d_outX, d_outY, threadsTotal);
+    scalarMulKernelBase<<<blocks, threadsPerBlock>>>(d_start_scalars, d_outX, d_outY, threadsTotal, d_pre_Gx, d_pre_Gy, d_pre_phiGx, d_pre_phiGy);
     CUDA_CHECK(cudaDeviceSynchronize());
     JacobianPoint *h_P = new JacobianPoint[threadsTotal];
     uint64_t *h_outX = new uint64_t[threadsTotal * 4], *h_outY = new uint64_t[threadsTotal * 4];
@@ -457,7 +418,7 @@ int main(int argc, char* argv[]) {
     while (!stop_all) {
         dim3 gridDim(blocks, 1, 1);
         dim3 blockDim(threadsPerBlock, 1, 1);
-        size_t sharedMem = (WARP_SIZE * 8 * sizeof(uint32_t)) + (WARP_SIZE * 5 * sizeof(uint32_t)) + (batch_size * 4 * sizeof(uint64_t));
+        size_t sharedMem = batch_size * 4 * sizeof(uint64_t);
         fused_ec_hash<<<gridDim, blockDim, sharedMem, streamKernel>>>(
             d_P, d_R, d_start_scalars, d_counts256, threadsTotal, batch_size,
             max_batches_per_launch, d_found_flag, d_found_result, d_hashes_accum, d_any_left
