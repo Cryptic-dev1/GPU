@@ -5,6 +5,7 @@
 #define FOUND_NONE  0
 #define FOUND_LOCK  1
 #define FOUND_READY 2
+#define MAX_BATCH_SIZE 1024
 
 struct FoundResult {
     int      threadId;
