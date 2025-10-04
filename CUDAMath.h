@@ -72,14 +72,6 @@ __device__ void fieldCopy(const uint64_t a[4], uint64_t b[4]) {
     for (int i = 0; i < 4; ++i) b[i] = a[i];
 }
 
-__device__ bool ge256(const uint64_t a[4], const uint64_t b[4]) {
-    for (int i = 3; i >= 0; --i) {
-        if (a[i] > b[i]) return true;
-        if (a[i] < b[i]) return false;
-    }
-    return true;
-}
-
 __device__ void lsl256(uint64_t a[4], uint64_t out[4], int n) {
     if (n >= 256) {
         fieldSetZero(out);
@@ -115,12 +107,12 @@ __device__ void lsr256(uint64_t a[4], uint64_t out[4], int n) {
 __device__ void lsl512(const uint64_t a[4], int n, uint64_t out[8]) {
     fieldSetZero(out);
     int limb = n / 64;
-    int shift = n % 64;
+    int bit_shift = n % 64;
     for (int i = 0; i < 4; ++i) {
         if (i + limb < 8) {
-            out[i + limb] = a[i] << shift;
-            if (shift && i + limb + 1 < 8) {
-                out[i + limb + 1] |= a[i] >> (64 - shift);
+            out[i + limb] = a[i] << bit_shift;
+            if (bit_shift && i + limb + 1 < 8) {
+                out[i + limb + 1] |= a[i] >> (64 - bit_shift);
             }
         }
     }
@@ -202,13 +194,12 @@ __device__ void mul256(const uint64_t a[4], const uint64_t b[4], uint64_t out[8]
 
 __device__ void mul_high(const uint64_t a[4], const uint64_t b[5], uint64_t high[5]) {
     uint64_t prod[9] = {0};
-    uint64_t carry;
+    uint64_t carry, lo, hi;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
         carry = 0;
         #pragma unroll
         for (int j = 0; j < 5; ++j) {
-            uint64_t lo, hi;
             UMULLO(lo, a[i], b[j]);
             UMULHI(hi, a[i], b[j]);
             UADDO(lo, lo, carry);

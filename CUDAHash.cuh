@@ -33,8 +33,4 @@ __device__ void getHash160_33bytes(const uint8_t* pubkey33, uint8_t hash20[20]);
 __device__ void addBigEndian32(uint8_t* data32, uint64_t offset);
 __device__ void batch_getHash160_33bytes(const uint8_t* pubkeys, uint8_t* hashes, int n);
 
-// Additional declarations used in CUDACyclone.cu (may be in CUDAUtils.h)
-__device__ bool hash160_prefix_equals(const uint8_t hash[20], uint32_t prefix);
-__device__ bool hash160_matches_prefix_then_full(const uint8_t hash[20], const uint8_t target[20], uint32_t prefix);
-
 #endif // CUDA_HASH_CUH
