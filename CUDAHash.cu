@@ -1,13 +1,10 @@
 #include "CUDAHash.cuh"
-#include <cstdio>
 #include <cstdint>
-#include <stdint.h>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <cstring>
 
-__device__ __forceinline__ uint32_t ror32(uint32_t x, int n)
-{
+__device__ __forceinline__ uint32_t ror32(uint32_t x, int n) {
 #if __CUDA_ARCH__ >= 350
     return __funnelshift_r(x, x, n);
 #else
@@ -15,13 +12,14 @@ __device__ __forceinline__ uint32_t ror32(uint32_t x, int n)
 #endif
 }
 
+__device__ __forceinline__ uint32_t rol32(uint32_t x, int n) { return ror32(x, 32 - n); }
+
 __device__ __forceinline__ uint32_t bigS0(uint32_t x) { return ror32(x, 2) ^ ror32(x, 13) ^ ror32(x, 22); }
 __device__ __forceinline__ uint32_t bigS1(uint32_t x) { return ror32(x, 6) ^ ror32(x, 11) ^ ror32(x, 25); }
-__device__ __forceinline__ uint32_t smallS0(uint32_t x){ return ror32(x, 7) ^ ror32(x, 18) ^ (x >> 3); }
-__device__ __forceinline__ uint32_t smallS1(uint32_t x){ return ror32(x,17) ^ ror32(x, 19) ^ (x >>10); }
-
-__device__ __forceinline__ uint32_t Ch (uint32_t x,uint32_t y,uint32_t z){ return (x & y) ^ (~x & z); }
-__device__ __forceinline__ uint32_t Maj(uint32_t x,uint32_t y,uint32_t z){ return (x & y) | (x & z) | (y & z); }
+__device__ __forceinline__ uint32_t smallS0(uint32_t x) { return ror32(x, 7) ^ ror32(x, 18) ^ (x >> 3); }
+__device__ __forceinline__ uint32_t smallS1(uint32_t x) { return ror32(x, 17) ^ ror32(x, 19) ^ (x >> 10); }
+__device__ __forceinline__ uint32_t Ch(uint32_t x, uint32_t y, uint32_t z) { return (x & y) ^ (~x & z); }
+__device__ __forceinline__ uint32_t Maj(uint32_t x, uint32_t y, uint32_t z) { return (x & y) | (x & z) | (y & z); }
 
 __device__ __constant__ uint32_t K[64] = {
     0x428A2F98,0x71374491,0xB5C0FBCF,0xE9B5DBA5,0x3956C25B,0x59F111F1,0x923F82A4,0xAB1C5ED5,
@@ -35,467 +33,237 @@ __device__ __constant__ uint32_t K[64] = {
 };
 
 __device__ __constant__ uint32_t IV[8] = {
-    0x6a09e667ul,0xbb67ae85ul,0x3c6ef372ul,0xa54ff53aul,
-    0x510e527ful,0x9b05688cul,0x1f83d9ab ,0x5be0cd19ul
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
 };
-__device__ __forceinline__ void SHA256Initialize(uint32_t s[8])
-{
-#pragma unroll
-    for (int i = 0; i < 8; i++) s[i] = IV[i];
+
+__device__ __forceinline__ void SHA256Initialize(uint32_t s[8]) {
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) s[i] = IV[i];
 }
-__device__ __forceinline__ void SHA256Transform(uint32_t state[8], uint32_t W_in[64])
-{
-    uint32_t a = state[0], b = state[1], c = state[2], d = state[3];
-    uint32_t e = state[4], f = state[5], g = state[6], h = state[7];
 
-    uint32_t w[16];
-#pragma unroll
-    for (int i = 0; i < 16; ++i) w[i] = W_in[i];
-
-#pragma unroll 64
+__device__ void SHA256Transform(uint32_t state[8], const uint32_t W[16]) {
+    extern __shared__ uint32_t shared[];
+    uint32_t *s_state = shared;
+    uint32_t *my_state = s_state + (threadIdx.x % WARP_SIZE) * 8;
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) my_state[i] = state[i];
+    uint32_t a = my_state[0], b = my_state[1], c = my_state[2], d = my_state[3];
+    uint32_t e = my_state[4], f = my_state[5], g = my_state[6], h = my_state[7];
+    uint32_t W_exp[64];
+    #pragma unroll
+    for (int i = 0; i < 16; ++i) W_exp[i] = W[i];
+    #pragma unroll
+    for (int t = 16; t < 64; ++t) {
+        W_exp[t] = smallS1(W_exp[t-2]) + W_exp[t-7] + smallS0(W_exp[t-15]) + W_exp[t-16];
+    }
+    #pragma unroll
     for (int t = 0; t < 64; ++t) {
-        if (t >= 16) {
-            uint32_t s0 = smallS0(w[(t + 1)  & 15]);
-            uint32_t s1 = smallS1(w[(t + 14) & 15]);
-            uint32_t newW = w[t & 15] + s1 + w[(t + 9) & 15] + s0;
-            w[t & 15] = newW;
-        }
-        uint32_t Wt = w[t & 15];
-        uint32_t T1 = h + bigS1(e) + Ch(e, f, g) + K[t] + Wt;
+        uint32_t T1 = h + bigS1(e) + Ch(e, f, g) + K[t] + W_exp[t];
         uint32_t T2 = bigS0(a) + Maj(a, b, c);
-
-        h = g;
-        g = f;
-        f = e;
-        e = d + T1;
-        d = c;
-        c = b;
-        b = a;
-        a = T1 + T2;
+        h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
     }
-
-    state[0] += a; state[1] += b; state[2] += c; state[3] += d;
-    state[4] += e; state[5] += f; state[6] += g; state[7] += h;
-}
-__device__ __forceinline__ void RIPEMD160Initialize(uint32_t s[5])
-{
-
-	s[0] = 0x67452301ul;
-	s[1] = 0xEFCDAB89ul;
-	s[2] = 0x98BADCFEul;
-	s[3] = 0x10325476ul;
-	s[4] = 0xC3D2E1F0ul;
-
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) my_state[i] += (i == 0 ? a : i == 1 ? b : i == 2 ? c : i == 3 ? d :
+                                                 i == 4 ? e : i == 5 ? f : i == 6 ? g : h);
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) state[i] = my_state[i];
+    __syncthreads();
 }
 
-#define ROL(x,n) ((x>>(32-n))|(x<<n))
-#define f1(x, y, z) (x ^ y ^ z)
-#define f2(x, y, z) ((x & y) | (~x & z))
-#define f3(x, y, z) ((x | ~y) ^ z)
-#define f4(x, y, z) ((x & z) | (~z & y))
-#define f5(x, y, z) (x ^ (y | ~z))
-
-#define RPRound(a,b,c,d,e,f,x,k,r) \
-  u = a + f + x + k; \
-  a = ROL(u, r) + e; \
-  c = ROL(c, 10);
-
-#define R11(a,b,c,d,e,x,r) RPRound(a, b, c, d, e, f1(b, c, d), x, 0, r)
-#define R21(a,b,c,d,e,x,r) RPRound(a, b, c, d, e, f2(b, c, d), x, 0x5A827999ul, r)
-#define R31(a,b,c,d,e,x,r) RPRound(a, b, c, d, e, f3(b, c, d), x, 0x6ED9EBA1ul, r)
-#define R41(a,b,c,d,e,x,r) RPRound(a, b, c, d, e, f4(b, c, d), x, 0x8F1BBCDCul, r)
-#define R51(a,b,c,d,e,x,r) RPRound(a, b, c, d, e, f5(b, c, d), x, 0xA953FD4Eul, r)
-#define R12(a,b,c,d,e,x,r) RPRound(a, b, c, d, e, f5(b, c, d), x, 0x50A28BE6ul, r)
-#define R22(a,b,c,d,e,x,r) RPRound(a, b, c, d, e, f4(b, c, d), x, 0x5C4DD124ul, r)
-#define R32(a,b,c,d,e,x,r) RPRound(a, b, c, d, e, f3(b, c, d), x, 0x6D703EF3ul, r)
-#define R42(a,b,c,d,e,x,r) RPRound(a, b, c, d, e, f2(b, c, d), x, 0x7A6D76E9ul, r)
-#define R52(a,b,c,d,e,x,r) RPRound(a, b, c, d, e, f1(b, c, d), x, 0, r)
-
-__device__ __forceinline__ void RIPEMD160Transform(uint32_t s[5], uint32_t* w)
-{
-    uint32_t u;
-    uint32_t a1 = s[0], b1 = s[1], c1 = s[2], d1 = s[3], e1 = s[4];
-    uint32_t a2 = a1, b2 = b1, c2 = c1, d2 = d1, e2 = e1;
-
-    R11(a1, b1, c1, d1, e1, w[0], 11);
-	R12(a2, b2, c2, d2, e2, w[5], 8);
-	R11(e1, a1, b1, c1, d1, w[1], 14);
-	R12(e2, a2, b2, c2, d2, w[14], 9);
-	R11(d1, e1, a1, b1, c1, w[2], 15);
-	R12(d2, e2, a2, b2, c2, w[7], 9);
-	R11(c1, d1, e1, a1, b1, w[3], 12);
-	R12(c2, d2, e2, a2, b2, w[0], 11);
-	R11(b1, c1, d1, e1, a1, w[4], 5);
-	R12(b2, c2, d2, e2, a2, w[9], 13);
-	R11(a1, b1, c1, d1, e1, w[5], 8);
-	R12(a2, b2, c2, d2, e2, w[2], 15);
-	R11(e1, a1, b1, c1, d1, w[6], 7);
-	R12(e2, a2, b2, c2, d2, w[11], 15);
-	R11(d1, e1, a1, b1, c1, w[7], 9);
-	R12(d2, e2, a2, b2, c2, w[4], 5);
-	R11(c1, d1, e1, a1, b1, w[8], 11);
-	R12(c2, d2, e2, a2, b2, w[13], 7);
-	R11(b1, c1, d1, e1, a1, w[9], 13);
-	R12(b2, c2, d2, e2, a2, w[6], 7);
-	R11(a1, b1, c1, d1, e1, w[10], 14);
-	R12(a2, b2, c2, d2, e2, w[15], 8);
-	R11(e1, a1, b1, c1, d1, w[11], 15);
-	R12(e2, a2, b2, c2, d2, w[8], 11);
-	R11(d1, e1, a1, b1, c1, w[12], 6);
-	R12(d2, e2, a2, b2, c2, w[1], 14);
-	R11(c1, d1, e1, a1, b1, w[13], 7);
-	R12(c2, d2, e2, a2, b2, w[10], 14);
-	R11(b1, c1, d1, e1, a1, w[14], 9);
-	R12(b2, c2, d2, e2, a2, w[3], 12);
-	R11(a1, b1, c1, d1, e1, w[15], 8);
-	R12(a2, b2, c2, d2, e2, w[12], 6);
-
-	R21(e1, a1, b1, c1, d1, w[7], 7);
-	R22(e2, a2, b2, c2, d2, w[6], 9);
-	R21(d1, e1, a1, b1, c1, w[4], 6);
-	R22(d2, e2, a2, b2, c2, w[11], 13);
-	R21(c1, d1, e1, a1, b1, w[13], 8);
-	R22(c2, d2, e2, a2, b2, w[3], 15);
-	R21(b1, c1, d1, e1, a1, w[1], 13);
-	R22(b2, c2, d2, e2, a2, w[7], 7);
-	R21(a1, b1, c1, d1, e1, w[10], 11);
-	R22(a2, b2, c2, d2, e2, w[0], 12);
-	R21(e1, a1, b1, c1, d1, w[6], 9);
-	R22(e2, a2, b2, c2, d2, w[13], 8);
-	R21(d1, e1, a1, b1, c1, w[15], 7);
-	R22(d2, e2, a2, b2, c2, w[5], 9);
-	R21(c1, d1, e1, a1, b1, w[3], 15);
-	R22(c2, d2, e2, a2, b2, w[10], 11);
-	R21(b1, c1, d1, e1, a1, w[12], 7);
-	R22(b2, c2, d2, e2, a2, w[14], 7);
-	R21(a1, b1, c1, d1, e1, w[0], 12);
-	R22(a2, b2, c2, d2, e2, w[15], 7);
-	R21(e1, a1, b1, c1, d1, w[9], 15);
-	R22(e2, a2, b2, c2, d2, w[8], 12);
-	R21(d1, e1, a1, b1, c1, w[5], 9);
-	R22(d2, e2, a2, b2, c2, w[12], 7);
-	R21(c1, d1, e1, a1, b1, w[2], 11);
-	R22(c2, d2, e2, a2, b2, w[4], 6);
-	R21(b1, c1, d1, e1, a1, w[14], 7);
-	R22(b2, c2, d2, e2, a2, w[9], 15);
-	R21(a1, b1, c1, d1, e1, w[11], 13);
-	R22(a2, b2, c2, d2, e2, w[1], 13);
-	R21(e1, a1, b1, c1, d1, w[8], 12);
-	R22(e2, a2, b2, c2, d2, w[2], 11);
-
-	R31(d1, e1, a1, b1, c1, w[3], 11);
-	R32(d2, e2, a2, b2, c2, w[15], 9);
-	R31(c1, d1, e1, a1, b1, w[10], 13);
-	R32(c2, d2, e2, a2, b2, w[5], 7);
-	R31(b1, c1, d1, e1, a1, w[14], 6);
-	R32(b2, c2, d2, e2, a2, w[1], 15);
-	R31(a1, b1, c1, d1, e1, w[4], 7);
-	R32(a2, b2, c2, d2, e2, w[3], 11);
-	R31(e1, a1, b1, c1, d1, w[9], 14);
-	R32(e2, a2, b2, c2, d2, w[7], 8);
-	R31(d1, e1, a1, b1, c1, w[15], 9);
-	R32(d2, e2, a2, b2, c2, w[14], 6);
-	R31(c1, d1, e1, a1, b1, w[8], 13);
-	R32(c2, d2, e2, a2, b2, w[6], 6);
-	R31(b1, c1, d1, e1, a1, w[1], 15);
-	R32(b2, c2, d2, e2, a2, w[9], 14);
-	R31(a1, b1, c1, d1, e1, w[2], 14);
-	R32(a2, b2, c2, d2, e2, w[11], 12);
-	R31(e1, a1, b1, c1, d1, w[7], 8);
-	R32(e2, a2, b2, c2, d2, w[8], 13);
-	R31(d1, e1, a1, b1, c1, w[0], 13);
-	R32(d2, e2, a2, b2, c2, w[12], 5);
-	R31(c1, d1, e1, a1, b1, w[6], 6);
-	R32(c2, d2, e2, a2, b2, w[2], 14);
-	R31(b1, c1, d1, e1, a1, w[13], 5);
-	R32(b2, c2, d2, e2, a2, w[10], 13);
-	R31(a1, b1, c1, d1, e1, w[11], 12);
-	R32(a2, b2, c2, d2, e2, w[0], 13);
-	R31(e1, a1, b1, c1, d1, w[5], 7);
-	R32(e2, a2, b2, c2, d2, w[4], 7);
-	R31(d1, e1, a1, b1, c1, w[12], 5);
-	R32(d2, e2, a2, b2, c2, w[13], 5);
-
-	R41(c1, d1, e1, a1, b1, w[1], 11);
-	R42(c2, d2, e2, a2, b2, w[8], 15);
-	R41(b1, c1, d1, e1, a1, w[9], 12);
-	R42(b2, c2, d2, e2, a2, w[6], 5);
-	R41(a1, b1, c1, d1, e1, w[11], 14);
-	R42(a2, b2, c2, d2, e2, w[4], 8);
-	R41(e1, a1, b1, c1, d1, w[10], 15);
-	R42(e2, a2, b2, c2, d2, w[1], 11);
-	R41(d1, e1, a1, b1, c1, w[0], 14);
-	R42(d2, e2, a2, b2, c2, w[3], 14);
-	R41(c1, d1, e1, a1, b1, w[8], 15);
-	R42(c2, d2, e2, a2, b2, w[11], 14);
-	R41(b1, c1, d1, e1, a1, w[12], 9);
-	R42(b2, c2, d2, e2, a2, w[15], 6);
-	R41(a1, b1, c1, d1, e1, w[4], 8);
-	R42(a2, b2, c2, d2, e2, w[0], 14);
-	R41(e1, a1, b1, c1, d1, w[13], 9);
-	R42(e2, a2, b2, c2, d2, w[5], 6);
-	R41(d1, e1, a1, b1, c1, w[3], 14);
-	R42(d2, e2, a2, b2, c2, w[12], 9);
-	R41(c1, d1, e1, a1, b1, w[7], 5);
-	R42(c2, d2, e2, a2, b2, w[2], 12);
-	R41(b1, c1, d1, e1, a1, w[15], 6);
-	R42(b2, c2, d2, e2, a2, w[13], 9);
-	R41(a1, b1, c1, d1, e1, w[14], 8);
-	R42(a2, b2, c2, d2, e2, w[9], 12);
-	R41(e1, a1, b1, c1, d1, w[5], 6);
-	R42(e2, a2, b2, c2, d2, w[7], 5);
-	R41(d1, e1, a1, b1, c1, w[6], 5);
-	R42(d2, e2, a2, b2, c2, w[10], 15);
-	R41(c1, d1, e1, a1, b1, w[2], 12);
-	R42(c2, d2, e2, a2, b2, w[14], 8);
-
-	R51(b1, c1, d1, e1, a1, w[4], 9);
-	R52(b2, c2, d2, e2, a2, w[12], 8);
-	R51(a1, b1, c1, d1, e1, w[0], 15);
-	R52(a2, b2, c2, d2, e2, w[15], 5);
-	R51(e1, a1, b1, c1, d1, w[5], 5);
-	R52(e2, a2, b2, c2, d2, w[10], 12);
-	R51(d1, e1, a1, b1, c1, w[9], 11);
-	R52(d2, e2, a2, b2, c2, w[4], 9);
-	R51(c1, d1, e1, a1, b1, w[7], 6);
-	R52(c2, d2, e2, a2, b2, w[1], 12);
-	R51(b1, c1, d1, e1, a1, w[12], 8);
-	R52(b2, c2, d2, e2, a2, w[5], 5);
-	R51(a1, b1, c1, d1, e1, w[2], 13);
-	R52(a2, b2, c2, d2, e2, w[8], 14);
-	R51(e1, a1, b1, c1, d1, w[10], 12);
-	R52(e2, a2, b2, c2, d2, w[7], 6);
-	R51(d1, e1, a1, b1, c1, w[14], 5);
-	R52(d2, e2, a2, b2, c2, w[6], 8);
-	R51(c1, d1, e1, a1, b1, w[1], 12);
-	R52(c2, d2, e2, a2, b2, w[2], 13);
-	R51(b1, c1, d1, e1, a1, w[3], 13);
-	R52(b2, c2, d2, e2, a2, w[13], 6);
-	R51(a1, b1, c1, d1, e1, w[8], 14);
-	R52(a2, b2, c2, d2, e2, w[14], 5);
-	R51(e1, a1, b1, c1, d1, w[11], 11);
-	R52(e2, a2, b2, c2, d2, w[0], 15);
-	R51(d1, e1, a1, b1, c1, w[6], 8);
-	R52(d2, e2, a2, b2, c2, w[3], 13);
-	R51(c1, d1, e1, a1, b1, w[15], 5);
-	R52(c2, d2, e2, a2, b2, w[9], 11);
-	R51(b1, c1, d1, e1, a1, w[13], 6);
-	R52(b2, c2, d2, e2, a2, w[11], 11);
-
-    uint32_t t = s[0];
-    s[0] = s[1] + c1 + d2;
-    s[1] = s[2] + d1 + e2;
-    s[2] = s[3] + e1 + a2;
-    s[3] = s[4] + a1 + b2;
-    s[4] = t + b1 + c2;
+__device__ __forceinline__ uint32_t pack_be4(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
+    return ((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)c << 8) | d;
 }
 
-__device__ void getSHA256_33bytes(const uint8_t* pubkey33, uint8_t sha[32]);
-__device__ void getRIPEMD160_32bytes(const uint8_t* sha, uint8_t ripemd[20]);
+__device__ void SHA256_33_from_limbs(uint8_t prefix02_03, const uint64_t x_be_limbs[4], uint32_t out_state[8]) {
+    uint32_t W[16];
+    W[0] = pack_be4(prefix02_03, (uint8_t)(x_be_limbs[3]>>56), (uint8_t)(x_be_limbs[3]>>48), (uint8_t)(x_be_limbs[3]>>40));
+    W[1] = pack_be4((uint8_t)(x_be_limbs[3]>>32), (uint8_t)(x_be_limbs[3]>>24), (uint8_t)(x_be_limbs[3]>>16), (uint8_t)(x_be_limbs[3]>>8));
+    W[2] = pack_be4((uint8_t)(x_be_limbs[3]), (uint8_t)(x_be_limbs[2]>>56), (uint8_t)(x_be_limbs[2]>>48), (uint8_t)(x_be_limbs[2]>>40));
+    W[3] = pack_be4((uint8_t)(x_be_limbs[2]>>32), (uint8_t)(x_be_limbs[2]>>24), (uint8_t)(x_be_limbs[2]>>16), (uint8_t)(x_be_limbs[2]>>8));
+    W[4] = pack_be4((uint8_t)(x_be_limbs[2]), (uint8_t)(x_be_limbs[1]>>56), (uint8_t)(x_be_limbs[1]>>48), (uint8_t)(x_be_limbs[1]>>40));
+    W[5] = pack_be4((uint8_t)(x_be_limbs[1]>>32), (uint8_t)(x_be_limbs[1]>>24), (uint8_t)(x_be_limbs[1]>>16), (uint8_t)(x_be_limbs[1]>>8));
+    W[6] = pack_be4((uint8_t)(x_be_limbs[1]), (uint8_t)(x_be_limbs[0]>>56), (uint8_t)(x_be_limbs[0]>>48), (uint8_t)(x_be_limbs[0]>>40));
+    W[7] = pack_be4((uint8_t)(x_be_limbs[0]>>32), (uint8_t)(x_be_limbs[0]>>24), (uint8_t)(x_be_limbs[0]>>16), (uint8_t)(x_be_limbs[0]>>8));
+    W[8] = pack_be4((uint8_t)(x_be_limbs[0]), 0x80, 0, 0);
+    #pragma unroll
+    for (int i = 9; i < 15; ++i) W[i] = 0;
+    W[15] = 33 * 8;
+    SHA256Initialize(out_state);
+    SHA256Transform(out_state, W);
+}
 
-__device__ __forceinline__ void getSHA256_33bytes(const uint8_t* pubkey33, uint8_t sha[32]) {
-    uint32_t M[16];
-#pragma unroll
-    for (int i = 0; i < 16; ++i) M[i] = 0;
-
-#pragma unroll
-    for (int i = 0; i < 33; ++i) {
-        M[i >> 2] |= (uint32_t)pubkey33[i] << (24 - ((i & 3) << 3));
-    }
-    M[8] |= (uint32_t)0x80 << (24 - ((33 & 3) << 3));
-    M[14] = 0;
-    M[15] = 33u * 8u;
-
-    uint32_t state[8];
-    SHA256Initialize(state);
-    SHA256Transform(state, M);
-
-#pragma unroll
+__device__ void getSHA256_33bytes(const uint8_t* pubkey33, uint8_t sha[32]) {
+    uint32_t W[16], state[8];
+    #pragma unroll
     for (int i = 0; i < 8; ++i) {
-        sha[4 * i + 0] = (uint8_t)(state[i] >> 24);
-        sha[4 * i + 1] = (uint8_t)(state[i] >> 16);
-        sha[4 * i + 2] = (uint8_t)(state[i] >> 8);
-        sha[4 * i + 3] = (uint8_t)(state[i] >> 0);
+        W[i] = pack_be4(pubkey33[4*i], pubkey33[4*i+1], pubkey33[4*i+2], pubkey33[4*i+3]);
     }
-}
-__device__ __forceinline__ void getRIPEMD160_32bytes(const uint8_t* sha, uint8_t ripemd[20])
-{
-    uint8_t block[64] = {0};
-    
-    for (int i = 0; i < 32; i++) {
-    block[i] = sha[i];
-    }  
-    block[32] = 0x80;
-    const uint32_t bitLen = 256;  
-
-    block[56] = bitLen & 0xFF;
-    block[57] = (bitLen >> 8) & 0xFF;
-    block[58] = (bitLen >> 16) & 0xFF;
-    block[59] = (bitLen >> 24) & 0xFF;
-
-    uint32_t W[16];
-    
-    for (int i = 0; i < 16; i++) {
-        W[i] = ((uint32_t)block[4*i+3] << 24) |
-               ((uint32_t)block[4*i+2] << 16) |
-               ((uint32_t)block[4*i+1] << 8) |
-               ((uint32_t)block[4*i]);
-    }
-
-    uint32_t state[5];
-    RIPEMD160Initialize(state);
-    RIPEMD160Transform(state, W);
-   
-    for (int i = 0; i < 5; i++) {
-        ripemd[4*i]   = (state[i] >> 0) & 0xFF;
-        ripemd[4*i+1] = (state[i] >> 8) & 0xFF;
-        ripemd[4*i+2] = (state[i] >> 16) & 0xFF;
-        ripemd[4*i+3] = (state[i] >> 24) & 0xFF;
+    W[8] = pack_be4(pubkey33[32], 0x80, 0, 0);
+    #pragma unroll
+    for (int i = 9; i < 15; ++i) W[i] = 0;
+    W[15] = 33 * 8;
+    SHA256Initialize(state);
+    SHA256Transform(state, W);
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        sha[4*i] = (uint8_t)(state[i] >> 24);
+        sha[4*i+1] = (uint8_t)(state[i] >> 16);
+        sha[4*i+2] = (uint8_t)(state[i] >> 8);
+        sha[4*i+3] = (uint8_t)(state[i]);
     }
 }
 
-__device__ void getHash160_33bytes(const uint8_t* pubkey33, uint8_t* hash20);
+__device__ __forceinline__ uint32_t f1(uint32_t x, uint32_t y, uint32_t z) { return x ^ y ^ z; }
+__device__ __forceinline__ uint32_t f2(uint32_t x, uint32_t y, uint32_t z) { return (x & y) | (~x & z); }
+__device__ __forceinline__ uint32_t f3(uint32_t x, uint32_t y, uint32_t z) { return (x | ~y) ^ z; }
+__device__ __forceinline__ uint32_t f4(uint32_t x, uint32_t y, uint32_t z) { return (x & z) | (y & ~z); }
+__device__ __forceinline__ uint32_t f5(uint32_t x, uint32_t y, uint32_t z) { return x ^ (y | ~z); }
 
-__device__  void getHash160_33bytes(const uint8_t* pubkey33, uint8_t* hash20)
-{
-    uint8_t sha256[32];
-    getSHA256_33bytes(pubkey33, sha256);
-    getRIPEMD160_32bytes(sha256, hash20);
+__device__ __constant__ uint32_t RIPE_K[5] = {0, 0x5A827999, 0x6ED9EBA1, 0x8F1BBCDC, 0xA953FD4E};
+__device__ __constant__ uint32_t RIPE_KP[5] = {0x50A28BE6, 0x5C4DD124, 0x6D703EF3, 0x7A6D76E9, 0};
+__device__ __constant__ int RIPE_S[80] = {
+    11,14,15,12,5,8,7,9,11,13,14,15,6,7,9,8,7,6,8,13,11,9,7,15,7,12,15,9,11,7,13,12,
+    11,13,6,7,14,9,13,15,14,8,13,6,5,12,7,5,11,12,14,15,14,15,9,8,9,14,5,6,8,6,5,12,
+    9,15,5,11,6,8,13,12,5,12,13,14,11,8,5,6
+};
+__device__ __constant__ int RIPE_SP[80] = {
+    8,9,9,11,13,15,15,5,7,7,8,11,14,14,12,6,9,13,15,7,12,8,9,11,7,7,12,7,6,15,13,11,
+    9,7,15,12,8,9,11,7,7,12,7,6,15,13,11,9,7,15,12,8,9,11,7,7,12,7,6,15,13,11,9
+};
+__device__ __constant__ int RIPE_R[80] = {
+    0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,7,4,13,1,10,6,15,3,12,0,9,5,2,14,11,8,
+    3,10,14,4,9,15,8,1,2,7,0,6,13,11,5,12,1,9,11,10,0,8,12,4,13,3,7,15,14,5,6,2,
+    4,0,5,9,7,12,2,10,14,1,3,8,11,6,15,13
+};
+__device__ __constant__ int RIPE_RP[80] = {
+    5,14,7,0,9,2,11,4,13,6,15,8,1,10,3,12,6,11,3,7,0,13,5,10,14,15,8,12,4,9,1,2,
+    15,5,1,3,7,14,6,9,11,8,12,2,10,0,4,13,8,6,4,1,3,11,15,0,5,12,2,13,9,7,10,14,
+    12,15,10,4,1,5,8,7,6,2,13,14,0,3,9,11
+};
+
+__device__ void RIPEMD160Initialize(uint32_t s[5]) {
+    s[0] = 0x67452301; s[1] = 0xEFCDAB89; s[2] = 0x98BADCFE; s[3] = 0x10325476; s[4] = 0xC3D2E1F0;
 }
 
-__device__ __forceinline__ uint64_t loadU64BE(const uint8_t* p) {
-    return ((uint64_t)p[0] << 56) |
-           ((uint64_t)p[1] << 48) |
-           ((uint64_t)p[2] << 40) |
-           ((uint64_t)p[3] << 32) |
-           ((uint64_t)p[4] << 24) |
-           ((uint64_t)p[5] << 16) |
-           ((uint64_t)p[6] <<  8) |
-           ((uint64_t)p[7] <<  0);
-}
-
-__device__ __forceinline__ void storeU64BE(uint8_t* p, uint64_t x) {
-    p[0] = (uint8_t)(x >> 56);
-    p[1] = (uint8_t)(x >> 48);
-    p[2] = (uint8_t)(x >> 40);
-    p[3] = (uint8_t)(x >> 32);
-    p[4] = (uint8_t)(x >> 24);
-    p[5] = (uint8_t)(x >> 16);
-    p[6] = (uint8_t)(x >>  8);
-    p[7] = (uint8_t)(x >>  0);
-}
-
-__device__ __forceinline__ void addBigEndian256(uint8_t* key33, uint64_t offset)
-{
-    uint8_t* coord = key33 + 1;
-    uint64_t x0 = loadU64BE(coord);        
-    uint64_t x1 = loadU64BE(coord + 8);
-    uint64_t x2 = loadU64BE(coord + 16);
-    uint64_t x3 = loadU64BE(coord + 24);     
-
-    uint64_t new_x3 = x3 + offset;
-
-    if (new_x3 >= x3) {
-        x3 = new_x3;
+__device__ void RIPEMD160Transform(uint32_t state[5], const uint32_t W[16]) {
+    extern __shared__ uint32_t shared[];
+    uint32_t *s_ripe_state = shared + (WARP_SIZE * 8);
+    uint32_t *my_state = s_ripe_state + (threadIdx.x % WARP_SIZE) * 5;
+    #pragma unroll
+    for (int i = 0; i < 5; ++i) my_state[i] = state[i];
+    uint32_t a = my_state[0], b = my_state[1], c = my_state[2], d = my_state[3], e = my_state[4];
+    uint32_t ap = a, bp = b, cp = c, dp = d, ep = e;
+    #pragma unroll
+    for (int j = 0; j < 80; ++j) {
+        uint32_t f, fp, k, kp;
+        int r = RIPE_R[j], rp = RIPE_RP[j], s = RIPE_S[j], sp = RIPE_SP[j];
+        if (j < 16) { f = f1(b, c, d); fp = f5(bp, cp, dp); k = RIPE_K[0]; kp = RIPE_KP[0]; }
+        else if (j < 32) { f = f2(b, c, d); fp = f4(bp, cp, dp); k = RIPE_K[1]; kp = RIPE_KP[1]; }
+        else if (j < 48) { f = f3(b, c, d); fp = f3(bp, cp, dp); k = RIPE_K[2]; kp = RIPE_KP[2]; }
+        else if (j < 64) { f = f4(b, c, d); fp = f2(bp, cp, dp); k = RIPE_K[3]; kp = RIPE_KP[3]; }
+        else { f = f5(b, c, d); fp = f1(bp, cp, dp); k = RIPE_K[4]; kp = RIPE_KP[4]; }
+        uint32_t t = rol32(a + f + W[r] + k, s) + e;
+        a = e; e = d; d = rol32(c, 10); c = b; b = t;
+        t = rol32(ap + fp + W[rp] + kp, sp) + ep;
+        ap = ep; ep = dp; dp = rol32(cp, 10); cp = bp; bp = t;
     }
-    else {
-        x3 = new_x3;
-        uint64_t new_x2 = x2 + 1;
-        if (new_x2 >= x2) {
-            x2 = new_x2;
-        }
-        else {
-            x2 = new_x2;
-            uint64_t new_x1 = x1 + 1;
-            if (new_x1 >= x1) {
-                x1 = new_x1;
-            }
-            else {
-                x1 = new_x1;
-                x0 = x0 + 1;
-            }
-        }
-    }
-
-    storeU64BE(coord,     x0);
-    storeU64BE(coord + 8, x1);
-    storeU64BE(coord + 16, x2);
-    storeU64BE(coord + 24, x3);
+    uint32_t t = my_state[1] + c + dp;
+    my_state[1] = my_state[2] + d + ep;
+    my_state[2] = my_state[3] + e + ap;
+    my_state[3] = my_state[0] + a + bp;
+    my_state[0] = my_state[4] + b + cp;
+    my_state[4] = t;
+    #pragma unroll
+    for (int i = 0; i < 5; ++i) state[i] = my_state[i];
+    __syncthreads();
 }
 
-__device__ __forceinline__ bool compare20(const uint8_t* h, const uint8_t* ref) {
-    ulonglong2 a, b;
-    uint32_t c, d;
-    
-    memcpy(&a, h, sizeof(ulonglong2));
-    memcpy(&b, ref, sizeof(ulonglong2));
-    
-    memcpy(&c, h + 16, sizeof(uint32_t));
-    memcpy(&d, ref + 16, sizeof(uint32_t));
-    
-    return (a.x == b.x) && (a.y == b.y) && (c == d);
-}
-
-__device__ __forceinline__ uint32_t bswap32(uint32_t x){
-    return ((x & 0x000000FFu) << 24) | ((x & 0x0000FF00u) << 8) | ((x & 0x00FF0000u) >> 8) | ((x & 0xFF000000u) >> 24);
-}
-__device__ __forceinline__ uint32_t pack_be4(uint8_t a,uint8_t b,uint8_t c,uint8_t d){
-    return ((uint32_t)a<<24)|((uint32_t)b<<16)|((uint32_t)c<<8)|((uint32_t)d);
-}
-__device__ __forceinline__ void SHA256_33_from_limbs(uint8_t prefix02_03, const uint64_t x_be_limbs[4], uint32_t out_state[8]){
-    const uint64_t v3 = x_be_limbs[3];
-    const uint64_t v2 = x_be_limbs[2];
-    const uint64_t v1 = x_be_limbs[1];
-    const uint64_t v0 = x_be_limbs[0];
-    uint32_t M[16];
-    M[0] = pack_be4(prefix02_03, (uint8_t)(v3>>56), (uint8_t)(v3>>48), (uint8_t)(v3>>40));
-    M[1] = pack_be4((uint8_t)(v3>>32), (uint8_t)(v3>>24), (uint8_t)(v3>>16), (uint8_t)(v3>>8));
-    M[2] = pack_be4((uint8_t)(v3>>0), (uint8_t)(v2>>56), (uint8_t)(v2>>48), (uint8_t)(v2>>40));
-    M[3] = pack_be4((uint8_t)(v2>>32), (uint8_t)(v2>>24), (uint8_t)(v2>>16), (uint8_t)(v2>>8));
-    M[4] = pack_be4((uint8_t)(v2>>0), (uint8_t)(v1>>56), (uint8_t)(v1>>48), (uint8_t)(v1>>40));
-    M[5] = pack_be4((uint8_t)(v1>>32), (uint8_t)(v1>>24), (uint8_t)(v1>>16), (uint8_t)(v1>>8));
-    M[6] = pack_be4((uint8_t)(v1>>0), (uint8_t)(v0>>56), (uint8_t)(v0>>48), (uint8_t)(v0>>40));
-    M[7] = pack_be4((uint8_t)(v0>>32), (uint8_t)(v0>>24), (uint8_t)(v0>>16), (uint8_t)(v0>>8));
-    M[8] = pack_be4((uint8_t)(v0>>0), 0x80u, 0x00u, 0x00u);
-#pragma unroll
-    for(int i=9;i<16;++i) M[i]=0;
-    M[15] = 33u*8u;
-    uint32_t st[8];
-    SHA256Initialize(st);
-    SHA256Transform(st, M);
-#pragma unroll
-    for(int i=0;i<8;++i) out_state[i]=st[i];
-}
-
-__device__ __forceinline__ void RIPEMD160_from_SHA256_state(const uint32_t sha_state_be[8],
-                                                            uint8_t ripemd20[20])
-{
-    uint32_t W[16];
-#pragma unroll
-    for(int i=0;i<8;++i) W[i] = bswap32(sha_state_be[i]);
-    W[8]  = 0x00000080u;
-#pragma unroll
-    for(int i=9;i<14;++i) W[i]=0;
-    W[14] = 256u;
-    W[15] = 0u;
-
-    uint32_t s[5];
+__device__ void RIPEMD160_from_SHA256_state(const uint32_t sha_state_be[8], uint8_t ripemd20[20]) {
+    uint32_t W[16], s[5];
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) W[i] = bswap32(sha_state_be[i]);
+    W[8] = 0x00000080; W[9] = W[10] = W[11] = W[12] = W[13] = 0; W[14] = 256; W[15] = 0;
     RIPEMD160Initialize(s);
     RIPEMD160Transform(s, W);
-#pragma unroll
+    #pragma unroll
     for (int i = 0; i < 5; ++i) {
         ripemd20[4*i+0] = (uint8_t)(s[i] >> 0);
         ripemd20[4*i+1] = (uint8_t)(s[i] >> 8);
-        ripemd20[4*i+2] = (uint8_t)(s[i] >>16);
-        ripemd20[4*i+3] = (uint8_t)(s[i] >>24);
+        ripemd20[4*i+2] = (uint8_t)(s[i] >> 16);
+        ripemd20[4*i+3] = (uint8_t)(s[i] >> 24);
     }
 }
 
-__device__ __noinline__ void getHash160_33_from_limbs(uint8_t prefix02_03,
-                                                      const uint64_t x_be_limbs[4],
-                                                      uint8_t out20[20])
-{
+__device__ void getHash160_33_from_limbs(uint8_t prefix02_03, const uint64_t x_be_limbs[4], uint8_t out20[20]) {
     uint32_t sha_state[8];
     SHA256_33_from_limbs(prefix02_03, x_be_limbs, sha_state);
     RIPEMD160_from_SHA256_state(sha_state, out20);
+}
+
+__device__ void getHash160_33bytes(const uint8_t* pubkey33, uint8_t hash20[20]) {
+    uint8_t sha[32];
+    getSHA256_33bytes(pubkey33, sha);
+    getRIPEMD160_32bytes(sha, hash20);
+}
+
+__device__ void getRIPEMD160_32bytes(const uint8_t* sha, uint8_t ripemd20[20]) {
+    uint32_t W[16], s[5];
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        W[i] = ((uint32_t)sha[4*i] << 24) | ((uint32_t)sha[4*i+1] << 16) |
+               ((uint32_t)sha[4*i+2] << 8) | sha[4*i+3];
+    }
+    W[8] = 0x00000080; W[9] = W[10] = W[11] = W[12] = W[13] = 0; W[14] = 256; W[15] = 0;
+    RIPEMD160Initialize(s);
+    RIPEMD160Transform(s, W);
+    #pragma unroll
+    for (int i = 0; i < 5; ++i) {
+        ripemd20[4*i+0] = (uint8_t)(s[i] >> 0);
+        ripemd20[4*i+1] = (uint8_t)(s[i] >> 8);
+        ripemd20[4*i+2] = (uint8_t)(s[i] >> 16);
+        ripemd20[4*i+3] = (uint8_t)(s[i] >> 24);
+    }
+}
+
+__device__ void addBigEndian32(uint8_t* data32, uint64_t offset) {
+    uint64_t current = ((uint64_t)data32[28] << 24) | ((uint64_t)data32[29] << 16) |
+                       ((uint64_t)data32[30] << 8) | data32[31];
+    current += offset;
+    data32[28] = (uint8_t)(current >> 24);
+    data32[29] = (uint8_t)(current >> 16);
+    data32[30] = (uint8_t)(current >> 8);
+    data32[31] = (uint8_t)current;
+}
+
+// Batch hashing for multiple public keys
+__device__ void batch_getHash160_33bytes(const uint8_t* pubkeys, uint8_t* hashes, int n) {
+    extern __shared__ uint32_t shared[];
+    uint32_t *s_state = shared;
+    uint32_t *my_state = s_state + (threadIdx.x % WARP_SIZE) * 8;
+    uint32_t state[8], W[16];
+    for (int idx = threadIdx.x; idx < n; idx += blockDim.x) {
+        const uint8_t* pubkey = pubkeys + idx * 33;
+        uint8_t* hash = hashes + idx * 20;
+        #pragma unroll
+        for (int i = 0; i < 8; ++i) {
+            W[i] = pack_be4(pubkey[4*i], pubkey[4*i+1], pubkey[4*i+2], pubkey[4*i+3]);
+        }
+        W[8] = pack_be4(pubkey[32], 0x80, 0, 0);
+        #pragma unroll
+        for (int i = 9; i < 15; ++i) W[i] = 0;
+        W[15] = 33 * 8;
+        SHA256Initialize(state);
+        SHA256Transform(state, W);
+        uint8_t sha[32];
+        #pragma unroll
+        for (int i = 0; i < 8; ++i) {
+            sha[4*i] = (uint8_t)(state[i] >> 24);
+            sha[4*i+1] = (uint8_t)(state[i] >> 16);
+            sha[4*i+2] = (uint8_t)(state[i] >> 8);
+            sha[4*i+3] = (uint8_t)(state[i]);
+        }
+        getRIPEMD160_32bytes(sha, hash);
+    }
+    __syncthreads();
 }
