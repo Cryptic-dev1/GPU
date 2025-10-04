@@ -55,40 +55,6 @@ __device__ __constant__ uint64_t MSK62 = 0x3FFFFFFFFFFFFFFFULL;
     UADD1(r[3], c_p[3]); \
 }
 
-__device__ __forceinline__ void inc256_device(uint64_t a[4], uint64_t inc) {
-    unsigned __int128 cur = (unsigned __int128)a[0] + inc;
-    a[0] = (uint64_t)cur;
-    uint64_t carry = (uint64_t)(cur >> 64);
-    for (int i = 1; i < 4 && carry; ++i) {
-        cur = (unsigned __int128)a[i] + carry;
-        a[i] = (uint64_t)cur;
-        carry = (uint64_t)(cur >> 64);
-    }
-}
-
-__device__ __forceinline__ void sub256_u64_inplace(uint64_t a[4], uint64_t dec) {
-    uint64_t borrow = (a[0] < dec) ? 1ULL : 0ULL;
-    a[0] = a[0] - dec;
-    #pragma unroll
-    for (int i = 1; i < 4; ++i) {
-        uint64_t ai = a[i];
-        uint64_t bi = borrow;
-        a[i] = ai - bi;
-        borrow = (ai < bi) ? 1ULL : 0ULL;
-        if (!borrow) break;
-    }
-}
-
-__device__ __forceinline__ unsigned long long warp_reduce_add_ull(unsigned long long v) {
-    unsigned mask = 0xFFFFFFFFu;
-    v += __shfl_down_sync(mask, v, 16);
-    v += __shfl_down_sync(mask, v, 8);
-    v += __shfl_down_sync(mask, v, 4);
-    v += __shfl_down_sync(mask, v, 2);
-    v += __shfl_down_sync(mask, v, 1);
-    return v;
-}
-
 // Field Utility Functions
 __device__ void fieldSetZero(uint64_t a[4]) {
     #pragma unroll
