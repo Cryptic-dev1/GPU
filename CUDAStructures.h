@@ -23,10 +23,6 @@ __device__ __constant__ unsigned long long Gy_d[4] = {0x4fe342e2ULL, 0xe0fa9e5bU
 // Precomputed tables (2^16 = 65,536 points, ~256 MB total)
 #define PRECOMPUTE_WINDOW 16
 #define PRECOMPUTE_SIZE (1LL << PRECOMPUTE_WINDOW)
-__device__ unsigned long long* d_pre_Gx;    // Dynamically allocated on device
-__device__ unsigned long long* d_pre_Gy;
-__device__ unsigned long long* d_pre_phiGx;
-__device__ unsigned long long* d_pre_phiGy;
 
 // Batch point tables for fused_ec_hash
 __device__ __constant__ unsigned long long c_Gx[(MAX_BATCH_SIZE/2) * 4];

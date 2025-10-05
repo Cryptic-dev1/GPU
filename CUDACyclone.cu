@@ -29,7 +29,7 @@ struct FoundResult {
     unsigned long long Ry_val[4];
 };
 
-// Stub implementations for missing functions (replace with actual CUDAUtils.h, CUDAHash.cuh if available)
+// Stub implementations for missing functions (replace with actual CUDAUtils.h, CUDAHash.cuh if needed)
 __device__ unsigned long long warp_reduce_add_ull(unsigned long long val) {
     for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
         val += __shfl_down_sync(0xFFFFFFFFu, val, offset);
@@ -120,12 +120,6 @@ __host__ long double ld_from_u256(const unsigned long long a[4]) {
         result = result * 18446744073709551616.0L + (long double)a[i];
     }
     return result;
-}
-
-__device__ void getHash160_33_from_limbs(uint8_t prefix, const unsigned long long x[4], uint8_t h20[20]) {
-    // Stub: Should compute RIPEMD160(SHA256(33-byte pubkey))
-    std::memset(h20, 0, 20);
-    h20[0] = prefix; // For compilation
 }
 
 // Namespace for utility functions
@@ -570,7 +564,9 @@ int main(int argc, char* argv[]) {
     fieldSetOne(h_phi_base.z);
     h_phi_base.infinity = false;
 
-    precompute_g_table_gpu(h_base, h_phi_base, &d_pre_Gx, &d_pre_Gy, &d_pre_phiGx, &d_pre_phiGy);
+    // Precompute tables
+    unsigned long long *d_pre_Gx_local, *d_pre_Gy_local, *d_pre_phiGx_local, *d_pre_phiGy_local;
+    precompute_g_table_gpu(h_base, h_phi_base, &d_pre_Gx_local, &d_pre_Gy_local, &d_pre_phiGx_local, &d_pre_phiGy_local);
 
     // Precompute batch points on GPU
     unsigned long long *d_Gx, *d_Gy;
@@ -652,7 +648,7 @@ int main(int argc, char* argv[]) {
     unsigned long long *d_outX, *d_outY;
     CUDA_CHECK(cudaMalloc(&d_outX, threadsTotal * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_outY, threadsTotal * 4 * sizeof(unsigned long long)));
-    scalarMulKernelBase<<<blocks, threadsPerBlock>>>(d_start_scalars, d_outX, d_outY, threadsTotal, d_pre_Gx, d_pre_Gy, d_pre_phiGx, d_pre_phiGy);
+    scalarMulKernelBase<<<blocks, threadsPerBlock>>>(d_start_scalars, d_outX, d_outY, threadsTotal, d_pre_Gx_local, d_pre_Gy_local, d_pre_phiGx_local, d_pre_phiGy_local);
     CUDA_CHECK(cudaDeviceSynchronize());
     std::cout << "scalarMulKernelBase completed" << std::endl;
     JacobianPoint *h_P = new JacobianPoint[threadsTotal];
@@ -798,10 +794,10 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(d_found_result));
     CUDA_CHECK(cudaFree(d_hashes_accum));
     CUDA_CHECK(cudaFree(d_any_left));
-    CUDA_CHECK(cudaFree(d_pre_Gx));
-    CUDA_CHECK(cudaFree(d_pre_Gy));
-    CUDA_CHECK(cudaFree(d_pre_phiGx));
-    CUDA_CHECK(cudaFree(d_pre_phiGy));
+    CUDA_CHECK(cudaFree(d_pre_Gx_local));
+    CUDA_CHECK(cudaFree(d_pre_Gy_local));
+    CUDA_CHECK(cudaFree(d_pre_phiGx_local));
+    CUDA_CHECK(cudaFree(d_pre_phiGy_local));
     if (h_start_scalars) CUDA_CHECK(cudaFreeHost(h_start_scalars));
     if (h_counts256) CUDA_CHECK(cudaFreeHost(h_counts256));
     CUDA_CHECK(cudaStreamDestroy(streamKernel));
