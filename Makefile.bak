@@ -1,25 +1,19 @@
-TARGET      := CUDACyclone
-SRC         := CUDACyclone.cu CUDAHash.cu
-OBJ         := $(SRC:.cu=.o)
-CC          := nvcc
+NVCC = nvcc
+NVCCFLAGS = -O3 -rdc=true -use_fast_math --ptxas-options=-O3 -gencode arch=compute_75,code=sm_75 -gencode arch=compute_86,code=sm_86 -gencode arch=compute_89,code=sm_89 -std=c++17
 
-GPU_ARCH ?= $(shell nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '.')
-SM_ARCHS   := 75 86 89 $(GPU_ARCH)
-GENCODE    := $(foreach arch,$(SM_ARCHS),-gencode arch=compute_$(arch),code=sm_$(arch))
+all: CUDACyclone
 
-NVCC_FLAGS := -O3 -rdc=true -use_fast_math --ptxas-options=-O3 $(GENCODE)
-CXXFLAGS   := -std=c++17
+CUDACyclone: CUDACyclone.o CUDAHash.o CUDAUtils.o
+    $(NVCC) $(NVCCFLAGS) -o CUDACyclone CUDACyclone.o CUDAHash.o CUDAUtils.o
 
-LDFLAGS    := -lcudadevrt -cudart=static
+CUDACyclone.o: CUDACyclone.cu CUDAMath.h CUDAStructures.h CUDAHash.cuh CUDAUtils.h sha256.h
+    $(NVCC) $(NVCCFLAGS) -c CUDACyclone.cu -o CUDACyclone.o
 
-all: $(TARGET)
+CUDAHash.o: CUDAHash.cu CUDAHash.cuh
+    $(NVCC) $(NVCCFLAGS) -c CUDAHash.cu -o CUDAHash.o
 
-$(TARGET): $(OBJ)
-	$(CC) $(NVCC_FLAGS) $(CXXFLAGS) $(OBJ) -o $@ $(LDFLAGS)
-
-%.o: %.cu
-	$(CC) $(NVCC_FLAGS) $(CXXFLAGS) -c $< -o $@
+CUDAUtils.o: CUDAUtils.cu CUDAUtils.h
+    $(NVCC) $(NVCCFLAGS) -c CUDAUtils.cu -o CUDAUtils.o
 
 clean:
-	rm -f $(TARGET) $(OBJ)
-
+    rm -f *.o CUDACyclone
