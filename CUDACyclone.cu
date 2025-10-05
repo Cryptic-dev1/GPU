@@ -18,22 +18,20 @@
 #include "sha256.h"
 #include "CUDAHash.cuh"
 #include "CUDAUtils.h"
+#include "CUDAStructures.h"
 
-// Verify uint64_t size
-static_assert(sizeof(uint64_t) == 8, "uint64_t must be 64 bits");
-
-// Local FoundResult struct for both host and device
+// Local FoundResult struct with unsigned long long for arrays
 struct FoundResult {
     int threadId;
     int iter;
-    uint64_t scalar_val[4];
-    uint64_t Rx_val[4];
-    uint64_t Ry_val[4];
+    unsigned long long scalar_val[4];
+    unsigned long long Rx_val[4];
+    unsigned long long Ry_val[4];
 };
 
 // Namespace for utility functions
 namespace CryptoUtils {
-    std::string formatHex256(const uint64_t* limbs) {
+    std::string formatHex256(const unsigned long long limbs[4]) {
         std::ostringstream oss;
         oss << std::hex << std::uppercase << std::setfill('0');
         for (int i = 3; i >= 0; --i) {
@@ -42,12 +40,12 @@ namespace CryptoUtils {
         return oss.str();
     }
 
-    std::string formatCompressedPubHex(const uint64_t* Rx, const uint64_t* Ry) {
+    std::string formatCompressedPubHex(const unsigned long long Rx[4], const unsigned long long Ry[4]) {
         uint8_t out[33];
         out[0] = (Ry[0] & 1ULL) ? 0x03 : 0x02;
         int off = 1;
         for (int limb = 3; limb >= 0; --limb) {
-            uint64_t v = Rx[limb];
+            unsigned long long v = Rx[limb];
             out[off+0] = (uint8_t)(v >> 56); out[off+1] = (uint8_t)(v >> 48);
             out[off+2] = (uint8_t)(v >> 40); out[off+3] = (uint8_t)(v >> 32);
             out[off+4] = (uint8_t)(v >> 24); out[off+5] = (uint8_t)(v >> 16);
@@ -83,9 +81,9 @@ __launch_bounds__(256, 2)
 __global__ void fused_ec_hash(
     JacobianPoint* __restrict__ P,
     JacobianPoint* __restrict__ R,
-    uint64_t* __restrict__ start_scalars,
-    uint64_t* __restrict__ counts256,
-    uint64_t threadsTotal,
+    unsigned long long* __restrict__ start_scalars,
+    unsigned long long* __restrict__ counts256,
+    unsigned long long threadsTotal,
     uint32_t batch_size,
     uint32_t max_batches_per_launch,
     int* __restrict__ d_found_flag,
@@ -97,7 +95,7 @@ __global__ void fused_ec_hash(
     if (B <= 0 || (B & 1) || B > MAX_BATCH_SIZE) return;
     const int half = B >> 1;
 
-    const uint64_t gid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned long long gid = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (gid >= threadsTotal) return;
 
     const unsigned lane = (unsigned)(threadIdx.x & (WARP_SIZE - 1));
@@ -116,7 +114,7 @@ __global__ void fused_ec_hash(
     #define MAYBE_WARP_FLUSH() do { if ((local_hashes & (FLUSH_THRESHOLD - 1u)) == 0u) WARP_FLUSH_HASHES(); } while (0)
 
     JacobianPoint P_local = P[gid];
-    uint64_t S[4], rem[4];
+    unsigned long long S[4], rem[4];
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
         S[i] = start_scalars[gid*4 + i];
@@ -130,10 +128,10 @@ __global__ void fused_ec_hash(
     }
 
     uint32_t batches_done = 0;
-    extern __shared__ uint64_t shared_mem[];
-    uint64_t* z_values = shared_mem;
+    extern __shared__ unsigned long long shared_mem[];
+    unsigned long long* z_values = shared_mem;
 
-    while (batches_done < max_batches_per_launch && ge256_u64(rem, (uint64_t)B)) {
+    while (batches_done < max_batches_per_launch && ge256_u64(rem, (unsigned long long)B)) {
         if (warp_found_ready(d_found_flag, full_mask, lane)) {
             WARP_FLUSH_HASHES();
             return;
@@ -163,9 +161,9 @@ __global__ void fused_ec_hash(
         __syncthreads();
 
         // Convert to affine and hash
-        uint64_t x_affine[4], y_affine[4];
+        unsigned long long x_affine[4], y_affine[4];
         if (lane < B && !P_local.infinity) {
-            uint64_t zinv[4], zinv2[4];
+            unsigned long long zinv[4], zinv2[4];
             fieldCopy(z_values + lane * 4, zinv);
             fieldSqr_opt(zinv, zinv2);
             fieldMul_opt(P_local.x, zinv2, x_affine);
@@ -199,8 +197,8 @@ __global__ void fused_ec_hash(
             }
         }
 
-        sub256_u64_inplace(rem, (uint64_t)B);
-        inc256_device(S, (uint64_t)B);
+        sub256_u64_inplace(rem, (unsigned long long)B);
+        inc256_device(S, (unsigned long long)B);
         batches_done++;
         if (_IsZero(rem)) {
             atomicOr(d_any_left, 0u);
@@ -226,7 +224,7 @@ std::string human_bytes(size_t bytes) {
     return ss.str();
 }
 
-void precompute_batch_points(uint64_t* h_Gx, uint64_t* h_Gy, int batch_size) {
+void precompute_batch_points(unsigned long long* h_Gx, unsigned long long* h_Gy, int batch_size) {
     JacobianPoint G, tmp;
     fieldCopy(Gx_d, G.x);
     fieldCopy(Gy_d, G.y);
@@ -245,8 +243,8 @@ void precompute_batch_points(uint64_t* h_Gx, uint64_t* h_Gy, int batch_size) {
     }
 }
 
-void precompute_g_table_gpu(JacobianPoint base, JacobianPoint phi_base, uint64_t** d_pre_Gx, uint64_t** d_pre_Gy, uint64_t** d_pre_phiGx, uint64_t** d_pre_phiGy) {
-    size_t table_size = PRECOMPUTE_SIZE * 4 * sizeof(uint64_t);
+void precompute_g_table_gpu(JacobianPoint base, JacobianPoint phi_base, unsigned long long** d_pre_Gx, unsigned long long** d_pre_Gy, unsigned long long** d_pre_phiGx, unsigned long long** d_pre_phiGy) {
+    size_t table_size = PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long);
     size_t total_size = table_size * 4; // 4 tables: Gx, Gy, phiGx, phiGy
     size_t free_mem, total_mem;
     CUDA_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
@@ -267,9 +265,9 @@ void precompute_g_table_gpu(JacobianPoint base, JacobianPoint phi_base, uint64_t
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void print_gpu_info(const cudaDeviceProp& prop, int blocks, int threadsPerBlock, int batch_size, uint64_t threadsTotal) {
-    size_t table_size = PRECOMPUTE_SIZE * 4 * sizeof(uint64_t) * 4; // 4 tables
-    size_t mem_used = (threadsTotal * (4 * 3 + 4 + 4) * sizeof(uint64_t)) + sizeof(FoundResult) +
+void print_gpu_info(const cudaDeviceProp& prop, int blocks, int threadsPerBlock, int batch_size, unsigned long long threadsTotal) {
+    size_t table_size = PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long) * 4; // 4 tables
+    size_t mem_used = (threadsTotal * (4 * 3 + 4 + 4) * sizeof(unsigned long long)) + sizeof(FoundResult) +
                       sizeof(int) + sizeof(unsigned long long) + sizeof(unsigned int) + table_size;
     std::cout << "======== PrePhase: GPU Information ====================\n";
     std::cout << "Device               : " << prop.name << " (compute " << prop.major << "." << prop.minor << ")\n";
@@ -290,7 +288,7 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, handle_sigint);
 
     // Argument parsing
-    uint64_t range_start[4] = {0}, range_end[4] = {0}, range_len[4];
+    unsigned long long range_start[4] = {0}, range_end[4] = {0}, range_len[4];
     uint8_t target_hash160[20] = {0};
     int blocks = 512, threadsPerBlock = 256, batch_size = 512;
     uint32_t max_batches_per_launch = 64;
@@ -360,7 +358,7 @@ int main(int argc, char* argv[]) {
     // GPU setup
     cudaDeviceProp prop;
     CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
-    uint64_t threadsTotal = (uint64_t)blocks * threadsPerBlock;
+    unsigned long long threadsTotal = (unsigned long long)blocks * threadsPerBlock;
     if (verbose) {
         print_gpu_info(prop, blocks, threadsPerBlock, batch_size, threadsTotal);
     }
@@ -378,7 +376,7 @@ int main(int argc, char* argv[]) {
     precompute_g_table_gpu(h_base, h_phi_base, &d_pre_Gx, &d_pre_Gy, &d_pre_phiGx, &d_pre_phiGy);
 
     // Precompute batch points
-    uint64_t h_Gx[MAX_BATCH_SIZE/2 * 4], h_Gy[MAX_BATCH_SIZE/2 * 4];
+    unsigned long long h_Gx[MAX_BATCH_SIZE/2 * 4], h_Gy[MAX_BATCH_SIZE/2 * 4];
     precompute_batch_points(h_Gx, h_Gy, batch_size);
     CUDA_CHECK(cudaMemcpyToSymbol(c_Gx, h_Gx, sizeof(h_Gx)));
     CUDA_CHECK(cudaMemcpyToSymbol(c_Gy, h_Gy, sizeof(h_Gy)));
@@ -389,14 +387,14 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_prefix, &target_prefix, sizeof(target_prefix)));
 
     // Allocate device memory
-    uint64_t *d_start_scalars, *d_counts256;
+    unsigned long long *d_start_scalars, *d_counts256;
     unsigned long long *d_hashes_accum;
     int *d_found_flag;
     unsigned int *d_any_left;
     FoundResult *d_found_result;
     JacobianPoint *d_P, *d_R;
-    CUDA_CHECK(cudaMalloc(&d_start_scalars, threadsTotal * 4 * sizeof(uint64_t)));
-    CUDA_CHECK(cudaMalloc(&d_counts256, threadsTotal * 4 * sizeof(uint64_t)));
+    CUDA_CHECK(cudaMalloc(&d_start_scalars, threadsTotal * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_counts256, threadsTotal * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_P, threadsTotal * sizeof(JacobianPoint)));
     CUDA_CHECK(cudaMalloc(&d_R, threadsTotal * sizeof(JacobianPoint)));
     CUDA_CHECK(cudaMalloc(&d_found_flag, sizeof(int)));
@@ -405,36 +403,36 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMalloc(&d_any_left, sizeof(unsigned int)));
 
     // Initialize scalars and counts
-    uint64_t *h_start_scalars = nullptr, *h_counts256 = nullptr;
-    CUDA_CHECK(cudaMallocHost(&h_start_scalars, threadsTotal * 4 * sizeof(uint64_t)));
-    CUDA_CHECK(cudaMallocHost(&h_counts256, threadsTotal * 4 * sizeof(uint64_t)));
-    for (uint64_t i = 0; i < threadsTotal; ++i) {
+    unsigned long long *h_start_scalars = nullptr, *h_counts256 = nullptr;
+    CUDA_CHECK(cudaMallocHost(&h_start_scalars, threadsTotal * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMallocHost(&h_counts256, threadsTotal * 4 * sizeof(unsigned long long)));
+    for (unsigned long long i = 0; i < threadsTotal; ++i) {
         add256_u64(range_start, i, h_start_scalars + i * 4);
-        uint64_t end_plus_1[4];
+        unsigned long long end_plus_1[4];
         add256_u64(range_start, threadsTotal, end_plus_1);
-        uint64_t count[4];
+        unsigned long long count[4];
         sub256(range_end, h_start_scalars + i * 4, count);
         if (ge256_u64(end_plus_1, range_end[0])) {
-            uint64_t remaining[4];
+            unsigned long long remaining[4];
             sub256(end_plus_1, range_end, remaining);
             sub256(count, remaining, count);
         }
         fieldCopy(count, h_counts256 + i * 4);
     }
-    CUDA_CHECK(cudaMemcpy(d_start_scalars, h_start_scalars, threadsTotal * 4 * sizeof(uint64_t), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_counts256, h_counts256, threadsTotal * 4 * sizeof(uint64_t), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_start_scalars, h_start_scalars, threadsTotal * 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_counts256, h_counts256, threadsTotal * 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
 
     // Initialize points
-    uint64_t *d_outX, *d_outY;
-    CUDA_CHECK(cudaMalloc(&d_outX, threadsTotal * 4 * sizeof(uint64_t)));
-    CUDA_CHECK(cudaMalloc(&d_outY, threadsTotal * 4 * sizeof(uint64_t)));
+    unsigned long long *d_outX, *d_outY;
+    CUDA_CHECK(cudaMalloc(&d_outX, threadsTotal * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_outY, threadsTotal * 4 * sizeof(unsigned long long)));
     scalarMulKernelBase<<<blocks, threadsPerBlock>>>(d_start_scalars, d_outX, d_outY, threadsTotal, d_pre_Gx, d_pre_Gy, d_pre_phiGx, d_pre_phiGy);
     CUDA_CHECK(cudaDeviceSynchronize());
     JacobianPoint *h_P = new JacobianPoint[threadsTotal];
-    uint64_t *h_outX = new uint64_t[threadsTotal * 4], *h_outY = new uint64_t[threadsTotal * 4];
-    CUDA_CHECK(cudaMemcpy(h_outX, d_outX, threadsTotal * 4 * sizeof(uint64_t), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(h_outY, d_outY, threadsTotal * 4 * sizeof(uint64_t), cudaMemcpyDeviceToHost));
-    for (uint64_t i = 0; i < threadsTotal; ++i) {
+    unsigned long long *h_outX = new unsigned long long[threadsTotal * 4], *h_outY = new unsigned long long[threadsTotal * 4];
+    CUDA_CHECK(cudaMemcpy(h_outX, d_outX, threadsTotal * 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_outY, d_outY, threadsTotal * 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    for (unsigned long long i = 0; i < threadsTotal; ++i) {
         fieldCopy(h_outX + i * 4, h_P[i].x);
         fieldCopy(h_outY + i * 4, h_P[i].y);
         fieldSetOne(h_P[i].z);
@@ -463,7 +461,7 @@ int main(int argc, char* argv[]) {
     while (!stop_all) {
         dim3 gridDim(blocks, 1, 1);
         dim3 blockDim(threadsPerBlock, 1, 1);
-        size_t sharedMem = batch_size * 4 * sizeof(uint64_t);
+        size_t sharedMem = batch_size * 4 * sizeof(unsigned long long);
         fused_ec_hash<<<gridDim, blockDim, sharedMem, streamKernel>>>(
             d_P, d_R, d_start_scalars, d_counts256, threadsTotal, batch_size,
             max_batches_per_launch, d_found_flag, d_found_result, d_hashes_accum, d_any_left
