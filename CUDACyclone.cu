@@ -170,23 +170,24 @@ __global__ void fused_ec_hash(
                 fieldSetZero(Q.y);
             }
             pointAddMixed(P_local, Q.x, Q.y, Q.infinity, P_local);
+            if (lane == 0 && blockIdx.x == 0) {
+                printf("Block %d, after pointAddMixed, P_local.infinity=%d, z[0]=%llx\n", blockIdx.x, P_local.infinity, P_local.z[0]);
+            }
         }
 
         // Batch inversion
-        if (lane < B) {
+        if (lane < B && !P_local.infinity) {
             fieldCopy(P_local.z, z_values + lane * 4);
             if (lane == 0) {
                 printf("Block %d, lane %d, writing z_values[0]=%llx\n", blockIdx.x, lane, z_values[0]);
             }
+        } else if (lane < B) {
+            fieldSetZero(z_values + lane * 4);
         }
         __syncthreads();
-        if (lane == 0) {
-            if (B * 4 <= 128) { // Ensure within shared memory bounds (1024 bytes / 8 = 128 elements)
-                batch_modinv_fermat(z_values, z_values, B);
-                printf("Block %d, lane 0, after batch_modinv_fermat, z_values[0]=%llx\n", blockIdx.x, z_values[0]);
-            } else {
-                printf("Block %d, lane 0, batch_size %d too large for shared memory\n", blockIdx.x, B);
-            }
+        if (lane == 0 && !P_local.infinity) {
+            batch_modinv_fermat(z_values, z_values, B);
+            printf("Block %d, lane 0, after batch_modinv_fermat, z_values[0]=%llx\n", blockIdx.x, z_values[0]);
         }
         __syncthreads();
 
@@ -194,16 +195,11 @@ __global__ void fused_ec_hash(
         unsigned long long x_affine[4], y_affine[4];
         if (lane < B && !P_local.infinity) {
             unsigned long long zinv[4], zinv2[4];
-            if (lane * 4 < B * 4) {
-                fieldCopy(z_values + lane * 4, zinv);
-                fieldSqr_opt_device(zinv, zinv2);
-                fieldMul_opt_device(P_local.x, zinv2, x_affine);
-                fieldMul_opt_device(zinv, zinv2, zinv2);
-                fieldMul_opt_device(P_local.y, zinv2, y_affine);
-            } else {
-                fieldSetZero(x_affine);
-                fieldSetZero(y_affine);
-            }
+            fieldCopy(z_values + lane * 4, zinv);
+            fieldSqr_opt_device(zinv, zinv2);
+            fieldMul_opt_device(P_local.x, zinv2, x_affine);
+            fieldMul_opt_device(zinv, zinv2, zinv2);
+            fieldMul_opt_device(P_local.y, zinv2, y_affine);
         } else {
             fieldSetZero(x_affine);
             fieldSetZero(y_affine);
@@ -524,7 +520,6 @@ int main(int argc, char* argv[]) {
         }
         fieldCopy(count, h_counts256 + i * 4);
     }
-    // Debug scalar initialization
     if (verbose) {
         std::cout << "First scalar: " << std::hex << h_start_scalars[0] << ":" << h_start_scalars[1] << ":"
                   << h_start_scalars[2] << ":" << h_start_scalars[3] << std::endl;
@@ -550,15 +545,15 @@ int main(int argc, char* argv[]) {
         fieldCopy(h_outY + i * 4, h_P[i].y);
         fieldSetOne(h_P[i].z);
         h_P[i].infinity = isZero256(h_outX + i * 4) && isZero256(h_outY + i * 4);
-        if (i < 1 && verbose) {
-            std::cout << "d_P[" << i << "].x: " << std::hex << h_P[i].x[0] << ":" << h_P[i].x[1] << ":"
-                      << h_P[i].x[2] << ":" << h_P[i].x[3] << std::endl;
-            std::cout << "d_P[" << i << "].y: " << std::hex << h_P[i].y[0] << ":" << h_P[i].y[1] << ":"
-                      << h_P[i].y[2] << ":" << h_P[i].y[3] << std::endl;
-        }
+    }
+    if (verbose) {
+        std::cout << "d_P[0].x: " << std::hex << h_P[0].x[0] << ":" << h_P[0].x[1] << ":"
+                  << h_P[0].x[2] << ":" << h_P[0].x[3] << std::endl;
+        std::cout << "d_P[0].y: " << std::hex << h_P[0].y[0] << ":" << h_P[0].y[1] << ":"
+                  << h_P[0].y[2] << ":" << h_P[0].y[3] << std::endl;
+        std::cout << "d_P[0].x[0]: " << std::hex << h_P[0].x[0] << std::endl;
     }
     CUDA_CHECK(cudaMemcpy(d_P, h_P, threadsTotal * sizeof(JacobianPoint), cudaMemcpyHostToDevice));
-    std::cout << "d_P[0].x[0]: " << std::hex << h_P[0].x[0] << std::endl;
     delete[] h_P; delete[] h_outX; delete[] h_outY;
     CUDA_CHECK(cudaFree(d_outX));
     CUDA_CHECK(cudaFree(d_outY));
@@ -581,7 +576,7 @@ int main(int argc, char* argv[]) {
     while (!stop_all) {
         dim3 gridDim(blocks, 1, 1);
         dim3 blockDim(threadsPerBlock, 1, 1);
-        size_t sharedMem = batch_size * 4 * sizeof(unsigned long long) * 4; // Increased to 1024 bytes
+        size_t sharedMem = (batch_size + 1) * 4 * sizeof(unsigned long long); // 288 bytes for batch_size=8
         fused_ec_hash<<<gridDim, blockDim, sharedMem, streamKernel>>>(
             d_P, d_R, d_start_scalars, d_counts256, threadsTotal, batch_size,
             max_batches_per_launch, d_found_flag, d_found_result, d_hashes_accum, d_any_left
