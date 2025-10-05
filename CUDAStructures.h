@@ -7,14 +7,6 @@
 #define FOUND_READY 2
 #define MAX_BATCH_SIZE 1024
 
-struct FoundResult {
-    int      threadId;
-    int      iter;
-    uint64_t scalar[4];
-    uint64_t Rx[4];
-    uint64_t Ry[4];
-};
-
 struct JacobianPoint {
     uint64_t x[4];
     uint64_t y[4];
@@ -55,7 +47,6 @@ __device__ __constant__ uint64_t c_a2[4] = {0x657c1108, 0x114ca50f, 0, 0};
 __device__ __constant__ uint64_t c_b1[4] = {0x06f547fa, 0xe4437ed6, 0, 0};
 __device__ __constant__ uint64_t c_b2[4] = {0xe86c90e4, 0x3086d221, 0, 0};
 
-__device__ FoundResult found_result;
 __device__ int found_flag = 0;
 
 #define CUDA_CHECK(ans) do { cudaError_t err = ans; if (err != cudaSuccess) { \
@@ -65,12 +56,6 @@ __device__ int found_flag = 0;
 __device__ bool ge256(const uint64_t a[4], const uint64_t b[4]);
 
 __global__ void scalarMulKernelBase(const uint64_t* scalars_in, uint64_t* outX, uint64_t* outY, int N, uint64_t* d_pre_Gx, uint64_t* d_pre_Gy, uint64_t* d_pre_phiGx, uint64_t* d_pre_phiGy);
-__global__ void fused_ec_hash(
-    JacobianPoint* P, JacobianPoint* R, uint64_t* start_scalars, uint64_t* counts256,
-    uint64_t threadsTotal, uint32_t batch_size, uint32_t max_batches_per_launch,
-    int* d_found_flag, FoundResult* d_found_result, unsigned long long* hashes_accum,
-    unsigned int* d_any_left
-);
 __global__ void precompute_table_kernel(JacobianPoint base, uint64_t* pre_x, uint64_t* pre_y, uint64_t size);
 
 #endif // CUDA_STRUCTURES_H

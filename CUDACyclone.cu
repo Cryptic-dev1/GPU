@@ -1,6 +1,6 @@
+#include <cstdint> // Prioritize standard type definitions
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -13,61 +13,56 @@
 #include <cmath>
 #include <csignal>
 #include <atomic>
-#include <type_traits>
 
 #include "CUDAMath.h"
 #include "sha256.h"
 #include "CUDAHash.cuh"
 #include "CUDAUtils.h"
-#include "CUDAStructures.h"
 
-// Local struct to avoid CUDAStructures.h dependency issues
-struct LocalFoundResult {
+// Verify uint64_t size
+static_assert(sizeof(uint64_t) == 8, "uint64_t must be 64 bits");
+
+// Local FoundResult struct for both host and device
+struct FoundResult {
     int threadId;
     int iter;
-    uint64_t scalar_val[4]; // Renamed to avoid macro conflicts
+    uint64_t scalar_val[4];
     uint64_t Rx_val[4];
     uint64_t Ry_val[4];
 };
 
-// Verify types at compile time
-static_assert(std::is_same<decltype(LocalFoundResult::scalar_val), uint64_t[4]>::value, "scalar_val must be uint64_t[4]");
-static_assert(std::is_same<decltype(LocalFoundResult::Rx_val), uint64_t[4]>::value, "Rx_val must be uint64_t[4]");
-static_assert(std::is_same<decltype(LocalFoundResult::Ry_val), uint64_t[4]>::value, "Ry_val must be uint64_t[4]");
+// Namespace for utility functions
+namespace CryptoUtils {
+    std::string formatHex256(const uint64_t* limbs) {
+        std::ostringstream oss;
+        oss << std::hex << std::uppercase << std::setfill('0');
+        for (int i = 3; i >= 0; --i) {
+            oss << std::setw(16) << limbs[i];
+        }
+        return oss.str();
+    }
 
-// Inline function definitions to avoid dependency issues
-std::string formatHex256(const uint64_t limbs[4]) {
-    static_assert(std::is_same<decltype(limbs), const uint64_t[4]>::value, "formatHex256 expects uint64_t[4]");
-    std::ostringstream oss;
-    oss << std::hex << std::uppercase << std::setfill('0');
-    for (int i = 3; i >= 0; --i) {
-        oss << std::setw(16) << limbs[i];
+    std::string formatCompressedPubHex(const uint64_t* Rx, const uint64_t* Ry) {
+        uint8_t out[33];
+        out[0] = (Ry[0] & 1ULL) ? 0x03 : 0x02;
+        int off = 1;
+        for (int limb = 3; limb >= 0; --limb) {
+            uint64_t v = Rx[limb];
+            out[off+0] = (uint8_t)(v >> 56); out[off+1] = (uint8_t)(v >> 48);
+            out[off+2] = (uint8_t)(v >> 40); out[off+3] = (uint8_t)(v >> 32);
+            out[off+4] = (uint8_t)(v >> 24); out[off+5] = (uint8_t)(v >> 16);
+            out[off+6] = (uint8_t)(v >> 8);  out[off+7] = (uint8_t)(v >> 0);
+            off += 8;
+        }
+        static const char* hexd = "0123456789ABCDEF";
+        std::string s;
+        s.resize(66);
+        for (int i = 0; i < 33; ++i) {
+            s[2*i] = hexd[(out[i] >> 4) & 0xF];
+            s[2*i+1] = hexd[out[i] & 0xF];
+        }
+        return s;
     }
-    return oss.str();
-}
-
-std::string formatCompressedPubHex(const uint64_t Rx[4], const uint64_t Ry[4]) {
-    static_assert(std::is_same<decltype(Rx), const uint64_t[4]>::value, "formatCompressedPubHex Rx expects uint64_t[4]");
-    static_assert(std::is_same<decltype(Ry), const uint64_t[4]>::value, "formatCompressedPubHex Ry expects uint64_t[4]");
-    uint8_t out[33];
-    out[0] = (Ry[0] & 1ULL) ? 0x03 : 0x02;
-    int off = 1;
-    for (int limb = 3; limb >= 0; --limb) {
-        uint64_t v = Rx[limb];
-        out[off+0] = (uint8_t)(v >> 56); out[off+1] = (uint8_t)(v >> 48);
-        out[off+2] = (uint8_t)(v >> 40); out[off+3] = (uint8_t)(v >> 32);
-        out[off+4] = (uint8_t)(v >> 24); out[off+5] = (uint8_t)(v >> 16);
-        out[off+6] = (uint8_t)(v >> 8);  out[off+7] = (uint8_t)(v >> 0);
-        off += 8;
-    }
-    static const char* hexd = "0123456789ABCDEF";
-    std::string s;
-    s.resize(66);
-    for (int i = 0; i < 33; ++i) {
-        s[2*i] = hexd[(out[i] >> 4) & 0xF];
-        s[2*i+1] = hexd[out[i] & 0xF];
-    }
-    return s;
 }
 
 static volatile sig_atomic_t g_sigint = 0;
@@ -195,9 +190,9 @@ __global__ void fused_ec_hash(
                     d_found_result->iter = batches_done;
                     #pragma unroll
                     for (int i = 0; i < 4; ++i) {
-                        d_found_result->scalar[i] = S[i];
-                        d_found_result->Rx[i] = x_affine[i];
-                        d_found_result->Ry[i] = y_affine[i];
+                        d_found_result->scalar_val[i] = S[i];
+                        d_found_result->Rx_val[i] = x_affine[i];
+                        d_found_result->Ry_val[i] = y_affine[i];
                     }
                     atomicExch(d_found_flag, FOUND_READY);
                 }
@@ -541,21 +536,12 @@ int main(int argc, char* argv[]) {
     if (h_found_flag == FOUND_READY) {
         FoundResult host_result;
         CUDA_CHECK(cudaMemcpy(&host_result, d_found_result, sizeof(FoundResult), cudaMemcpyDeviceToHost));
-        // Use local struct to ensure type safety
-        LocalFoundResult local_result;
-        local_result.threadId = host_result.threadId;
-        local_result.iter = host_result.iter;
-        for (int i = 0; i < 4; ++i) {
-            local_result.scalar_val[i] = host_result.scalar[i];
-            local_result.Rx_val[i] = host_result.Rx[i];
-            local_result.Ry_val[i] = host_result.Ry[i];
-        }
         std::cout << "\n======== FOUND MATCH! =================================\n";
-        std::cout << "Private Key   : " << formatHex256(local_result.scalar_val) << "\n";
-        std::cout << "Public Key    : " << formatCompressedPubHex(local_result.Rx_val, local_result.Ry_val) << "\n";
+        std::cout << "Private Key   : " << CryptoUtils::formatHex256(host_result.scalar_val) << "\n";
+        std::cout << "Public Key    : " << CryptoUtils::formatCompressedPubHex(host_result.Rx_val, host_result.Ry_val) << "\n";
         if (verbose) {
-            std::cout << "Thread ID     : " << local_result.threadId << "\n";
-            std::cout << "Iteration     : " << local_result.iter << "\n";
+            std::cout << "Thread ID     : " << host_result.threadId << "\n";
+            std::cout << "Iteration     : " << host_result.iter << "\n";
         }
     } else {
         if (g_sigint) {
