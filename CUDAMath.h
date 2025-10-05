@@ -179,7 +179,7 @@ __host__ __device__ void fieldSub_opt(const unsigned long long a[4], const unsig
     for (int i = 0; i < 4; ++i) {
 #ifdef __CUDA_ARCH__
         USUBO(temp, a[i], b[i]);
-        USUB1(temp, borrow);
+        USUBC(temp, borrow);
 #else
         __uint128_t diff = (__uint128_t)a[i] - b[i] - borrow;
         temp = (unsigned long long)diff;
@@ -226,13 +226,13 @@ __host__ __device__ void mul256(const unsigned long long a[4], const unsigned lo
             hi = (unsigned long long)(prod >> 64);
 #endif
             unsigned long long sum = lo + carry;
-            carry = (sum < lo) ? 1 : 0;
+            carry = (sum < lo) ? 1ULL : 0ULL;
             unsigned long long out_ij = out[i+j];
             out[i+j] = out_ij + sum;
-            carry += (out[i+j] < out_ij) ? 1 : 0;
+            carry += (out[i+j] < out_ij) ? 1ULL : 0ULL;
             unsigned long long out_ij1 = out[i+j+1];
             out[i+j+1] = out_ij1 + hi + carry;
-            carry = (out[i+j+1] < hi) ? 1 : 0;
+            carry = (out[i+j+1] < hi) ? 1ULL : 0ULL;
         }
         if (i + 4 < 8) out[i+4] += carry;
     }
@@ -257,13 +257,13 @@ __host__ __device__ void mul_high(const unsigned long long a[4], const unsigned 
             hi = (unsigned long long)(prod >> 64);
 #endif
             unsigned long long sum = lo + carry;
-            carry = (sum < lo) ? 1 : 0;
+            carry = (sum < lo) ? 1ULL : 0ULL;
             unsigned long long prod_ij = prod[i+j];
             prod[i+j] = prod_ij + sum;
-            carry += (prod[i+j] < prod_ij) ? 1 : 0;
+            carry += (prod[i+j] < prod_ij) ? 1ULL : 0ULL;
             unsigned long long prod_ij1 = prod[i+j+1];
             prod[i+j+1] = prod_ij1 + hi + carry;
-            carry = (prod[i+j+1] < hi) ? 1 : 0;
+            carry = (prod[i+j+1] < hi) ? 1ULL : 0ULL;
         }
         if (i + 5 < 9) prod[i+5] += carry;
     }
