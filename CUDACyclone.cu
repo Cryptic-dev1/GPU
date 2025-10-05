@@ -30,6 +30,26 @@ struct FoundResult {
     unsigned long long Ry_val[4];
 };
 
+// secp256k1 GLV constants (assumed, replace with CUDAUtils.h values if available)
+__device__ __constant__ unsigned long long c_n[4] = {
+    0xBFD25E8CD0364141ULL, 0xBAAEDCE6AF48A03BULL, 0xFFFFFFFFFFFFFFFEULL, 0xFFFFFFFFFFFFFFFFULL
+};
+__device__ __constant__ unsigned long long c_beta[4] = {
+    0x6B3C4F7E8DE6997DULL, 0x7CF27B188D034F7EULL, 0x0000000000000000ULL, 0x0000000000000000ULL
+};
+__device__ __constant__ unsigned long long c_b1[4] = {
+    0x0000000000000001ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL
+};
+__device__ __constant__ unsigned long long c_b2[4] = {
+    0x3086D221A7D46BCDULL, 0x483ADA7726A3C465ULL, 0x0000000000000000ULL, 0x0000000000000000ULL
+};
+__device__ __constant__ unsigned long long c_a1[4] = {
+    0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL
+};
+__device__ __constant__ unsigned long long c_a2[4] = {
+    0x0000000000000001ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL
+};
+
 // Namespace for utility functions
 namespace CryptoUtils {
     std::string formatHex256(const unsigned long long* limbs) {
@@ -176,7 +196,9 @@ __global__ void fused_ec_hash(
         }
 
         // Batch inversion
-        if (lane < B && !P_local.infinity) {
+        bool skip_inversion = P_local.infinity;
+        int any_non_infinity = __syncthreads_count(!P_local.infinity);
+        if (lane < B && !skip_inversion) {
             fieldCopy(P_local.z, z_values + lane * 4);
             if (lane == 0) {
                 printf("Block %d, lane %d, writing z_values[0]=%llx\n", blockIdx.x, lane, z_values[0]);
@@ -185,7 +207,7 @@ __global__ void fused_ec_hash(
             fieldSetZero(z_values + lane * 4);
         }
         __syncthreads();
-        if (lane == 0 && !P_local.infinity) {
+        if (lane == 0 && any_non_infinity) {
             batch_modinv_fermat(z_values, z_values, B);
             printf("Block %d, lane 0, after batch_modinv_fermat, z_values[0]=%llx\n", blockIdx.x, z_values[0]);
         }
@@ -193,7 +215,7 @@ __global__ void fused_ec_hash(
 
         // Convert to affine and hash
         unsigned long long x_affine[4], y_affine[4];
-        if (lane < B && !P_local.infinity) {
+        if (lane < B && !skip_inversion) {
             unsigned long long zinv[4], zinv2[4];
             fieldCopy(z_values + lane * 4, zinv);
             fieldSqr_opt_device(zinv, zinv2);
@@ -436,7 +458,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMalloc(&d_Gx_d, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_phi_base_x, 4 * sizeof(unsigned long long)));
     unsigned long long h_beta[4] = {
-        0x6b3c4f7eULL, 0x8de6997dULL, 0x7cf27b18ULL, 0x00000000ULL
+        0x6B3C4F7EULL, 0x8DE6997DULL, 0x7CF27B18ULL, 0x00000000ULL
     };
     CUDA_CHECK(cudaMemcpy(d_beta, h_beta, 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_Gx_d, h_Gx_d, 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
@@ -576,7 +598,7 @@ int main(int argc, char* argv[]) {
     while (!stop_all) {
         dim3 gridDim(blocks, 1, 1);
         dim3 blockDim(threadsPerBlock, 1, 1);
-        size_t sharedMem = (batch_size + 1) * 4 * sizeof(unsigned long long); // 288 bytes for batch_size=8
+        size_t sharedMem = (batch_size + 1) * 4 * sizeof(unsigned long long);
         fused_ec_hash<<<gridDim, blockDim, sharedMem, streamKernel>>>(
             d_P, d_R, d_start_scalars, d_counts256, threadsTotal, batch_size,
             max_batches_per_launch, d_found_flag, d_found_result, d_hashes_accum, d_any_left
