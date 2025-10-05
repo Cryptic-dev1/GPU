@@ -60,6 +60,7 @@ __device__ __constant__ uint64_t MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 __device__ void fieldSetZero(uint64_t a[4]) {
     #pragma unroll
     for (int i = 0; i < 4; ++i) a[i] = 0ULL;
+}
 
 __device__ void fieldSetOne(uint64_t a[4]) {
     a[0] = 1ULL;
