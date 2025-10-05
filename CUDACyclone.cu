@@ -303,7 +303,7 @@ int main(int argc, char* argv[]) {
     // Argument parsing
     unsigned long long range_start[4] = {0}, range_end[4] = {0}, range_len[4];
     uint8_t target_hash160[20] = {0};
-    int blocks = 256, threadsPerBlock = 128, batch_size = 64;
+    int blocks = 512, threadsPerBlock = 256, batch_size = 64;
     uint32_t max_batches_per_launch = 64;
     std::string range_str, address_str, grid_str;
     bool verbose = false;
@@ -370,8 +370,15 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    // Debug: Print batch_size
-    std::cout << "Batch size: " << batch_size << std::endl;
+    // Initialize Gx_d and Gy_d with secp256k1 generator point
+    unsigned long long h_Gx_d[4] = {
+        0x79BE667EF9DCBBAC, 0x55A06295CE870B07, 0x029BFCD89C5E9A7D, 0xF4A7C7D5B8F7A8B6
+    };
+    unsigned long long h_Gy_d[4] = {
+        0x483ADA7726A3C465, 0x5DA4FBFC0E1108A8, 0xFD17B448A6855419, 0x9C47D08FFB10D4B8
+    };
+    CUDA_CHECK(cudaMemcpyToSymbol(Gx_d, h_Gx_d, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyToSymbol(Gy_d, h_Gy_d, 4 * sizeof(unsigned long long)));
 
     // GPU setup
     cudaDeviceProp prop;
@@ -380,6 +387,8 @@ int main(int argc, char* argv[]) {
     if (verbose) {
         print_gpu_info(prop, blocks, threadsPerBlock, batch_size, threadsTotal);
     }
+
+    std::cout << "Batch size: " << batch_size << std::endl;
 
     // Precompute tables (2^24 points)
     JacobianPoint h_base, h_phi_base;
@@ -394,7 +403,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMalloc(&d_Gx_d, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_phi_base_x, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemcpyToSymbol(c_beta, c_beta, 4 * sizeof(unsigned long long))); // Copy c_beta to device constant
-    CUDA_CHECK(cudaMemcpy(d_Gx_d, Gx_d, 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_Gx_d, h_Gx_d, 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
     compute_phi_base_kernel<<<1, 1>>>(c_beta, d_Gx_d, d_phi_base_x);
     CUDA_CHECK(cudaDeviceSynchronize());
     CUDA_CHECK(cudaMemcpy(h_phi_base.x, d_phi_base_x, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
@@ -416,20 +425,10 @@ int main(int argc, char* argv[]) {
     precompute_batch_points_kernel<<<blocks_batch, threads>>>(d_Gx, d_Gy, batch_size);
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // Debug: Verify c_Gx and c_Gy initialization
-    unsigned long long h_Gx[batch_size / 2 * 4], h_Gy[batch_size / 2 * 4];
-    CUDA_CHECK(cudaMemcpyFromSymbol(h_Gx, c_Gx, (batch_size / 2) * 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemcpyFromSymbol(h_Gy, c_Gy, (batch_size / 2) * 4 * sizeof(unsigned long long)));
-    std::cout << "First few c_Gx values: ";
-    for (int i = 0; i < 4 && i < batch_size / 2 * 4; ++i) {
-        std::cout << std::hex << h_Gx[i] << " ";
-    }
-    std::cout << std::dec << std::endl;
-    std::cout << "First few c_Gy values: ";
-    for (int i = 0; i < 4 && i < batch_size / 2 * 4; ++i) {
-        std::cout << std::hex << h_Gy[i] << " ";
-    }
-    std::cout << std::dec << std::endl;
+    // Debug c_Gx and c_Gy initialization
+    unsigned long long h_c_Gx[batch_size / 2 * 4];
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_c_Gx, c_Gx, (batch_size / 2) * 4 * sizeof(unsigned long long)));
+    std::cout << "c_Gx[0]: " << std::hex << h_c_Gx[0] << std::endl;
 
     CUDA_CHECK(cudaMemcpyToSymbol(c_Gx, d_Gx, (batch_size / 2) * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemcpyToSymbol(c_Gy, d_Gy, (batch_size / 2) * 4 * sizeof(unsigned long long)));
