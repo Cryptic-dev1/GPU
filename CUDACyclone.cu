@@ -1,4 +1,4 @@
-#include <cstdint> // Prioritize standard type definitions
+#include <cstdint>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <cstdio>
@@ -213,6 +213,31 @@ __global__ void fused_ec_hash(
     WARP_FLUSH_HASHES();
 }
 
+__global__ void precompute_batch_points_kernel(unsigned long long* d_Gx, unsigned long long* d_Gy, int batch_size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= batch_size / 2) return;
+
+    JacobianPoint G, tmp;
+    fieldCopy(Gx_d, G.x);
+    fieldCopy(Gy_d, G.y);
+    fieldSetOne(G.z);
+    G.infinity = false;
+
+    // Compute 2^i * G for first half
+    for (int i = 0; i < idx; ++i) {
+        pointDoubleJacobian(G, tmp);
+        G = tmp;
+    }
+    fieldCopy(G.x, d_Gx + idx * 4);
+    fieldCopy(G.y, d_Gy + idx * 4);
+
+    // Compute 2^(i + batch_size/2) * G for second half
+    pointDoubleJacobian(G, tmp);
+    G = tmp;
+    fieldCopy(G.x, d_Gx + (idx + batch_size / 2) * 4);
+    fieldCopy(G.y, d_Gy + (idx + batch_size / 2) * 4);
+}
+
 std::string human_bytes(size_t bytes) {
     const char* units[] = {"B", "KB", "MB", "GB", "TB"};
     int unit_idx = 0;
@@ -226,32 +251,13 @@ std::string human_bytes(size_t bytes) {
     return ss.str();
 }
 
-void precompute_batch_points(unsigned long long* h_Gx, unsigned long long* h_Gy, int batch_size) {
-    JacobianPoint G, tmp;
-    fieldCopy(Gx_d, G.x);
-    fieldCopy(Gy_d, G.y);
-    fieldSetOne(G.z);
-    G.infinity = false;
-
-    for (int i = 0; i < batch_size / 2; ++i) {
-        fieldCopy(G.x, h_Gx + i * 4);
-        fieldCopy(G.y, h_Gy + i * 4);
-        pointDoubleJacobian(G, tmp);
-        G = tmp;
-        fieldCopy(G.x, h_Gx + (i + batch_size / 2) * 4);
-        fieldCopy(G.y, h_Gy + (i + batch_size / 2) * 4);
-        pointDoubleJacobian(G, tmp);
-        G = tmp;
-    }
-}
-
 void precompute_g_table_gpu(JacobianPoint base, JacobianPoint phi_base, unsigned long long** d_pre_Gx, unsigned long long** d_pre_Gy, unsigned long long** d_pre_phiGx, unsigned long long** d_pre_phiGy) {
     size_t table_size = PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long);
     size_t total_size = table_size * 4; // 4 tables: Gx, Gy, phiGx, phiGy
     size_t free_mem, total_mem;
     CUDA_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
     if (free_mem < total_size + 1e9) { // Reserve ~1GB for other allocations
-        std::cerr << "Insufficient VRAM for 2^24 precomputed tables (~" << total_size / 1e9 << " GB required)\n";
+        std::cerr << "Insufficient VRAM for 2^24 precomputed tables (~" << human_bytes(total_size) << ")\n";
         exit(EXIT_FAILURE);
     }
 
@@ -332,11 +338,13 @@ int main(int argc, char* argv[]) {
         std::cerr << "Invalid range hex values\n";
         return EXIT_FAILURE;
     }
+    sub256(range_end, range_start, range_len);
+
+    // Parse address
     if (!decode_p2pkh_address(address_str, target_hash160)) {
         std::cerr << "Invalid Bitcoin address\n";
         return EXIT_FAILURE;
     }
-    sub256(range_end, range_start, range_len);
 
     // Parse grid
     if (!grid_str.empty()) {
@@ -377,11 +385,18 @@ int main(int argc, char* argv[]) {
     h_phi_base.infinity = false;
     precompute_g_table_gpu(h_base, h_phi_base, &d_pre_Gx, &d_pre_Gy, &d_pre_phiGx, &d_pre_phiGy);
 
-    // Precompute batch points
-    unsigned long long h_Gx[MAX_BATCH_SIZE/2 * 4], h_Gy[MAX_BATCH_SIZE/2 * 4];
-    precompute_batch_points(h_Gx, h_Gy, batch_size);
-    CUDA_CHECK(cudaMemcpyToSymbol(c_Gx, h_Gx, sizeof(h_Gx)));
-    CUDA_CHECK(cudaMemcpyToSymbol(c_Gy, h_Gy, sizeof(h_Gy)));
+    // Precompute batch points on GPU
+    unsigned long long *d_Gx, *d_Gy;
+    CUDA_CHECK(cudaMalloc(&d_Gx, (batch_size / 2) * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_Gy, (batch_size / 2) * 4 * sizeof(unsigned long long)));
+    int threads = 256;
+    int blocks_batch = (batch_size / 2 + threads - 1) / threads;
+    precompute_batch_points_kernel<<<blocks_batch, threads>>>(d_Gx, d_Gy, batch_size);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaMemcpyToSymbol(c_Gx, d_Gx, (batch_size / 2) * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyToSymbol(c_Gy, d_Gy, (batch_size / 2) * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaFree(d_Gx));
+    CUDA_CHECK(cudaFree(d_Gy));
 
     // Set target
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_hash160, target_hash160, sizeof(target_hash160)));

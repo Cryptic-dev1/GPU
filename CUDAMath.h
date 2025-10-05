@@ -44,6 +44,7 @@ static const unsigned long long host_c_p[4] = {0xfffffc2fULL, 0xffffffffULL, 0xf
 
 // Utility function for zero check
 __host__ __device__ __forceinline__ bool isZero256(const unsigned long long a[4]) {
+    static_assert(sizeof(a[0]) == 8, "Array elements must be 64 bits");
     return (a[3] | a[2] | a[1] | a[0]) == 0ULL;
 }
 
@@ -142,92 +143,55 @@ __device__ void sub512(const unsigned long long a[8], const unsigned long long b
 }
 
 // Optimized Field Operations
-__host__ __device__ void fieldAdd_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
+__device__ void fieldAdd_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
     unsigned long long carry = 0, temp;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-#ifdef __CUDA_ARCH__
         UADDO(temp, a[i], b[i]);
         UADD1(temp, carry);
-#else
-        __uint128_t sum = (__uint128_t)a[i] + b[i] + carry;
-        temp = (unsigned long long)sum;
-        carry = (unsigned long long)(sum >> 64);
-#endif
         out[i] = temp;
         carry = (temp < a[i] || (temp == a[i] && b[i] != 0)) ? 1 : 0;
     }
-#ifdef __CUDA_ARCH__
     if (carry || ge256(out, c_p)) {
         USUBO(out[0], out[0], c_p[0]);
         USUBC(out[1], out[1], c_p[1]);
         USUBC(out[2], out[2], c_p[2]);
         USUB(out[3], out[3], c_p[3]);
     }
-#else
-    if (carry || ge256(out, host_c_p)) {
-        unsigned long long borrow = 0;
-        for (int i = 0; i < 4; ++i) {
-            __uint128_t diff = (__uint128_t)out[i] - host_c_p[i] - borrow;
-            out[i] = (unsigned long long)diff;
-            borrow = (diff >> 64) ? 1 : 0;
-        }
-    }
-#endif
 }
 
-__host__ __device__ void fieldSub_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
+__device__ void fieldSub_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
     unsigned long long borrow = 0, temp;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-#ifdef __CUDA_ARCH__
         USUBO(temp, a[i], b[i]);
         USUB1(temp, borrow);
-#else
-        __uint128_t diff = (__uint128_t)a[i] - b[i] - borrow;
-        temp = (unsigned long long)diff;
-        borrow = (diff >> 64) ? 1 : 0;
-#endif
         out[i] = temp;
         borrow = (temp > a[i] || (temp == a[i] && b[i] != 0)) ? 1 : 0;
     }
-#ifdef __CUDA_ARCH__
     if (borrow) {
         UADDO(out[0], out[0], c_p[0]);
         UADDC(out[1], out[1], c_p[1]);
         UADDC(out[2], out[2], c_p[2]);
         UADD(out[3], out[3], c_p[3]);
     }
-#else
-    if (borrow) {
-        unsigned long long carry = 0;
-        for (int i = 0; i < 4; ++i) {
-            __uint128_t sum = (__uint128_t)out[i] + host_c_p[i] + carry;
-            out[i] = (unsigned long long)sum;
-            carry = (unsigned long long)(sum >> 64);
-        }
-    }
-#endif
 }
 
-__host__ __device__ void mul256(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[8]) {
+__device__ void mul256(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[8]) {
+    static_assert(sizeof(a[0]) == 8, "Input array elements must be 64 bits");
+    static_assert(sizeof(b[0]) == 8, "Input array elements must be 64 bits");
+    static_assert(sizeof(out[0]) == 8, "Output array elements must be 64 bits");
     fieldSetZero(out);
     unsigned long long lo, hi, carry;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        carry = 0ULL;
+        carry = 0;
         #pragma unroll
         for (int j = 0; j < 4; ++j) {
             unsigned long long ai = a[i];
             unsigned long long bj = b[j];
-#ifdef __CUDA_ARCH__
             UMULLO(lo, ai, bj);
             UMULHI(hi, ai, bj);
-#else
-            __uint128_t prod = (__uint128_t)ai * bj;
-            lo = (unsigned long long)prod;
-            hi = (unsigned long long)(prod >> 64);
-#endif
             unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1ULL : 0ULL;
             unsigned long long out_ij = out[i + j];
@@ -241,24 +205,21 @@ __host__ __device__ void mul256(const unsigned long long a[4], const unsigned lo
     }
 }
 
-__host__ __device__ void mul_high(const unsigned long long a[4], const unsigned long long b[5], unsigned long long high[5]) {
+__device__ void mul_high(const unsigned long long a[4], const unsigned long long b[5], unsigned long long high[5]) {
+    static_assert(sizeof(a[0]) == 8, "Input array elements must be 64 bits");
+    static_assert(sizeof(b[0]) == 8, "Input array elements must be 64 bits");
+    static_assert(sizeof(high[0]) == 8, "Output array elements must be 64 bits");
     unsigned long long prod[9] = {0};
     unsigned long long lo, hi, carry;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        carry = 0ULL;
+        carry = 0;
         #pragma unroll
         for (int j = 0; j < 5; ++j) {
             unsigned long long ai = a[i];
             unsigned long long bj = b[j];
-#ifdef __CUDA_ARCH__
             UMULLO(lo, ai, bj);
             UMULHI(hi, ai, bj);
-#else
-            __uint128_t prod = (__uint128_t)ai * bj;
-            lo = (unsigned long long)prod;
-            hi = (unsigned long long)(prod >> 64);
-#endif
             unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1ULL : 0ULL;
             unsigned long long prod_ij = prod[i + j];
@@ -274,7 +235,7 @@ __host__ __device__ void mul_high(const unsigned long long a[4], const unsigned 
     for (int i = 0; i < 5; ++i) high[i] = prod[i + 4];
 }
 
-__host__ __device__ void modred_barrett_opt(const unsigned long long input[8], unsigned long long out[4]) {
+__device__ void modred_barrett_opt(const unsigned long long input[8], unsigned long long out[4]) {
     unsigned long long q[5], tmp[8], r[4];
     mul_high(input + 4, c_mu, q);
     mul256(q, c_p, tmp);
@@ -288,13 +249,13 @@ __host__ __device__ void modred_barrett_opt(const unsigned long long input[8], u
     fieldCopy(r, out);
 }
 
-__host__ __device__ void fieldMul_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
+__device__ void fieldMul_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
     unsigned long long prod[8];
     mul256(a, b, prod);
     modred_barrett_opt(prod, out);
 }
 
-__host__ __device__ void fieldSqr_opt(const unsigned long long a[4], unsigned long long out[4]) {
+__device__ void fieldSqr_opt(const unsigned long long a[4], unsigned long long out[4]) {
     fieldMul_opt(a, a, out);
 }
 
@@ -306,7 +267,7 @@ __host__ __device__ void fieldNeg(const unsigned long long a[4], unsigned long l
     fieldSub_opt(c_p, a, out);
 }
 
-__host__ __device__ void fieldInvFermat(const unsigned long long a[4], unsigned long long inv[4]) {
+__device__ void fieldInvFermat(const unsigned long long a[4], unsigned long long inv[4]) {
     if (isZero256(a)) {
         fieldSetZero(inv);
         return;
@@ -406,7 +367,7 @@ __device__ void pointSetG(JacobianPoint &P) {
     P.infinity = false;
 }
 
-__host__ __device__ void pointToAffine(const JacobianPoint &P, unsigned long long outX[4], unsigned long long outY[4]) {
+__device__ void pointToAffine(const JacobianPoint &P, unsigned long long outX[4], unsigned long long outY[4]) {
     if (P.infinity || isZero256(P.z)) {
         fieldSetZero(outX);
         fieldSetZero(outY);
@@ -420,7 +381,7 @@ __host__ __device__ void pointToAffine(const JacobianPoint &P, unsigned long lon
     fieldMul_opt(P.y, zinv2, outY);
 }
 
-__host__ __device__ void pointDoubleJacobian(const JacobianPoint &P, JacobianPoint &R) {
+__device__ void pointDoubleJacobian(const JacobianPoint &P, JacobianPoint &R) {
     if (P.infinity || isZero256(P.z)) {
         pointSetInfinity(R);
         return;
