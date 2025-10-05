@@ -303,7 +303,7 @@ int main(int argc, char* argv[]) {
     // Argument parsing
     unsigned long long range_start[4] = {0}, range_end[4] = {0}, range_len[4];
     uint8_t target_hash160[20] = {0};
-    int blocks = 512, threadsPerBlock = 256, batch_size = 128;
+    int blocks = 256, threadsPerBlock = 128, batch_size = 64;
     uint32_t max_batches_per_launch = 64;
     std::string range_str, address_str, grid_str;
     bool verbose = false;
