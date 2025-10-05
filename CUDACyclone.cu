@@ -274,8 +274,11 @@ void precompute_g_table_gpu(JacobianPoint base, JacobianPoint phi_base, unsigned
     int threads = 256;
     int blocks = (PRECOMPUTE_SIZE + threads - 1) / threads;
     precompute_table_kernel<<<blocks, threads>>>(base, *d_pre_Gx, *d_pre_Gy, PRECOMPUTE_SIZE);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    std::cout << "precompute_table_kernel (Gx, Gy) completed" << std::endl;
     precompute_table_kernel<<<blocks, threads>>>(phi_base, *d_pre_phiGx, *d_pre_phiGy, PRECOMPUTE_SIZE);
     CUDA_CHECK(cudaDeviceSynchronize());
+    std::cout << "precompute_table_kernel (phiGx, phiGy) completed" << std::endl;
 }
 
 void print_gpu_info(const cudaDeviceProp& prop, int blocks, int threadsPerBlock, int batch_size, unsigned long long threadsTotal) {
@@ -303,7 +306,7 @@ int main(int argc, char* argv[]) {
     // Argument parsing
     unsigned long long range_start[4] = {0}, range_end[4] = {0}, range_len[4];
     uint8_t target_hash160[20] = {0};
-    int blocks = 512, threadsPerBlock = 256, batch_size = 16;
+    int blocks = 512, threadsPerBlock = 256, batch_size = 8;
     uint32_t max_batches_per_launch = 64;
     std::string range_str, address_str, grid_str;
     bool verbose = false;
@@ -380,10 +383,10 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpyToSymbol(Gx_d, h_Gx_d, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemcpyToSymbol(Gy_d, h_Gy_d, 4 * sizeof(unsigned long long)));
 
-    // Initialize c_beta with secp256k1 beta
+    // Initialize c_beta with secp256k1 beta (for endomorphism)
     unsigned long long h_beta[4] = {
         0x7CF27B188D034F7E, 0x8DE6997D6330B136, 0x6B3C4F7E6E6D8A9B, 0xA7D2E7B9C4F8C7A6
-    }; // Example beta value (replace with correct secp256k1 beta if needed)
+    }; // secp256k1 beta (verify this value)
     CUDA_CHECK(cudaMemcpyToSymbol(c_beta, h_beta, 4 * sizeof(unsigned long long)));
 
     // GPU setup
@@ -412,6 +415,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpy(d_Gx_d, h_Gx_d, 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
     compute_phi_base_kernel<<<1, 1>>>(d_beta, d_Gx_d, d_phi_base_x);
     CUDA_CHECK(cudaDeviceSynchronize());
+    std::cout << "compute_phi_base_kernel completed" << std::endl;
     CUDA_CHECK(cudaMemcpy(h_phi_base.x, d_phi_base_x, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaFree(d_beta));
     CUDA_CHECK(cudaFree(d_Gx_d));
@@ -430,6 +434,7 @@ int main(int argc, char* argv[]) {
     int blocks_batch = (batch_size / 2 + threads - 1) / threads;
     precompute_batch_points_kernel<<<blocks_batch, threads>>>(d_Gx, d_Gy, batch_size);
     CUDA_CHECK(cudaDeviceSynchronize());
+    std::cout << "precompute_batch_points_kernel completed" << std::endl;
 
     // Debug c_Gx and c_Gy initialization
     unsigned long long h_c_Gx[batch_size / 2 * 4];
@@ -491,6 +496,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMalloc(&d_outY, threadsTotal * 4 * sizeof(unsigned long long)));
     scalarMulKernelBase<<<blocks, threadsPerBlock>>>(d_start_scalars, d_outX, d_outY, threadsTotal, d_pre_Gx, d_pre_Gy, d_pre_phiGx, d_pre_phiGy);
     CUDA_CHECK(cudaDeviceSynchronize());
+    std::cout << "scalarMulKernelBase completed" << std::endl;
     JacobianPoint *h_P = new JacobianPoint[threadsTotal];
     unsigned long long *h_outX = new unsigned long long[threadsTotal * 4], *h_outY = new unsigned long long[threadsTotal * 4];
     CUDA_CHECK(cudaMemcpy(h_outX, d_outX, threadsTotal * 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
