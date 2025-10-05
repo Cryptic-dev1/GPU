@@ -20,6 +20,38 @@
 #include "CUDAUtils.h"
 #include "CUDAStructures.h"
 
+// Inline implementations to avoid dependency issues
+std::string formatHex256(const uint64_t limbs[4]) {
+    std::ostringstream oss;
+    oss << std::hex << std::uppercase << std::setfill('0');
+    for (int i = 3; i >= 0; --i) {
+        oss << std::setw(16) << limbs[i];
+    }
+    return oss.str();
+}
+
+std::string formatCompressedPubHex(const uint64_t Rx[4], const uint64_t Ry[4]) {
+    uint8_t out[33];
+    out[0] = (Ry[0] & 1ULL) ? 0x03 : 0x02;
+    int off = 1;
+    for (int limb = 3; limb >= 0; --limb) {
+        uint64_t v = Rx[limb];
+        out[off+0] = (uint8_t)(v >> 56); out[off+1] = (uint8_t)(v >> 48);
+        out[off+2] = (uint8_t)(v >> 40); out[off+3] = (uint8_t)(v >> 32);
+        out[off+4] = (uint8_t)(v >> 24); out[off+5] = (uint8_t)(v >> 16);
+        out[off+6] = (uint8_t)(v >> 8);  out[off+7] = (uint8_t)(v >> 0);
+        off += 8;
+    }
+    static const char* hexd = "0123456789ABCDEF";
+    std::string s;
+    s.resize(66);
+    for (int i = 0; i < 33; ++i) {
+        s[2*i] = hexd[(out[i] >> 4) & 0xF];
+        s[2*i+1] = hexd[out[i] & 0xF];
+    }
+    return s;
+}
+
 static volatile sig_atomic_t g_sigint = 0;
 static void handle_sigint(int) { g_sigint = 1; }
 
@@ -492,8 +524,8 @@ int main(int argc, char* argv[]) {
         FoundResult host_result;
         CUDA_CHECK(cudaMemcpy(&host_result, d_found_result, sizeof(FoundResult), cudaMemcpyDeviceToHost));
         std::cout << "\n======== FOUND MATCH! =================================\n";
-        std::cout << "Private Key   : " << formatHex256(static_cast<const uint64_t*>(host_result.scalar)) << "\n";
-        std::cout << "Public Key    : " << formatCompressedPubHex(static_cast<const uint64_t*>(host_result.Rx), static_cast<const uint64_t*>(host_result.Ry)) << "\n";
+        std::cout << "Private Key   : " << formatHex256(host_result.scalar) << "\n";
+        std::cout << "Public Key    : " << formatCompressedPubHex(host_result.Rx, host_result.Ry) << "\n";
         if (verbose) {
             std::cout << "Thread ID     : " << host_result.threadId << "\n";
             std::cout << "Iteration     : " << host_result.iter << "\n";
