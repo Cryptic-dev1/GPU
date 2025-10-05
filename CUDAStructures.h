@@ -62,13 +62,7 @@ __device__ int found_flag = 0;
     std::cerr << "CUDA Error: " << cudaGetErrorString(err) << " at " << __FILE__ << ":" << __LINE__ << std::endl; exit(EXIT_FAILURE); } } while(0)
 
 // Utility function for ge256
-__device__ bool ge256(const uint64_t a[4], const uint64_t b[4]) {
-    for (int i = 3; i >= 0; --i) {
-        if (a[i] > b[i]) return true;
-        if (a[i] < b[i]) return false;
-    }
-    return true;
-}
+__device__ bool ge256(const uint64_t a[4], const uint64_t b[4]);
 
 __global__ void scalarMulKernelBase(const uint64_t* scalars_in, uint64_t* outX, uint64_t* outY, int N, uint64_t* d_pre_Gx, uint64_t* d_pre_Gy, uint64_t* d_pre_phiGx, uint64_t* d_pre_phiGy);
 __global__ void fused_ec_hash(
