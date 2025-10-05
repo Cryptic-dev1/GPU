@@ -5,7 +5,6 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include "CUDAStructures.h"
-#include "CUDAUtils.h"
 
 #define NBBLOCK 5
 #define BIFULLSIZE 40
@@ -480,6 +479,10 @@ __device__ void split_glv(const unsigned long long scalar[4], unsigned long long
     fieldMul_opt_device(c_b1, scalar, num);
     fieldAdd_opt_device(num, half_n, num);
     div512_256(num, c_n, q2, rem);
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("split_glv: q1=%llx:%llx:%llx:%llx, q2=%llx:%llx:%llx:%llx\n",
+               q1[0], q1[1], q1[2], q1[3], q2[0], q2[1], q2[2], q2[3]);
+    }
     // k1 = scalar - q1 * a1 - q2 * a2
     fieldMul_opt_device(q1, c_a1, tmp1);
     fieldMul_opt_device(q2, c_a2, tmp2);

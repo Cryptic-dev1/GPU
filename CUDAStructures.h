@@ -35,16 +35,13 @@ __device__ __constant__ unsigned long long c_Gy[(MAX_BATCH_SIZE/2) * 4];
 // secp256k1 constants (little-endian)
 __device__ __constant__ unsigned long long c_p[4] = {0xfffffc2fULL, 0xffffffffULL, 0xffffffffULL, 0xffffffffULL};
 __device__ __constant__ unsigned long long c_n[4] = {0xd0364141ULL, 0xbaaedce6ULL, 0xfffffffeULL, 0xffffffffULL};
-__device__ __constant__ unsigned long long c_lambda[4] = {0x1b23bd72ULL, 0x20816678ULL, 0x8812645aULL, 0x0c05c30eULL};
 __device__ __constant__ unsigned long long c_beta[4] = {0x6b3c4f7eULL, 0x8de6997dULL, 0x7cf27b18ULL, 0x00000000ULL};
-
-// Barrett reduction constant mu = floor(2^512 / p)
 __device__ __constant__ unsigned long long c_mu[5] = {0x1000003d1ULL, 0ULL, 0ULL, 0ULL, 1ULL};
 
 // GLV coefficients (precomputed, little-endian)
 __device__ __constant__ unsigned long long c_a1[4] = {0xe86c90e4ULL, 0x3086d221ULL, 0ULL, 0ULL};
 __device__ __constant__ unsigned long long c_a2[4] = {0x657c1108ULL, 0x114ca50fULL, 0ULL, 0ULL};
-__device__ __constant__ unsigned long long c_b1[4] = {0x06f547faULL, 0xe4437ed6ULL, 0ULL, 0ULL};
+__device__ __constant__ unsigned long long c_b1[4] = {0x90ab805fULL, 0x1bbaf310ULL, 0xaef9b7d6ULL, 0ULL};
 __device__ __constant__ unsigned long long c_b2[4] = {0xe86c90e4ULL, 0x3086d221ULL, 0ULL, 0ULL};
 
 __device__ int found_flag = 0;

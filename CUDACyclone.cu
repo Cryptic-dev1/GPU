@@ -16,7 +16,7 @@
 
 #include "CUDAMath.h"
 #include "CUDAHash.cuh"
-#include "CUDAUtils.h"
+#include "CUDAStructures.h"
 
 // Verify unsigned long long size
 static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bits");
@@ -28,26 +28,6 @@ struct FoundResult {
     unsigned long long scalar_val[4];
     unsigned long long Rx_val[4];
     unsigned long long Ry_val[4];
-};
-
-// secp256k1 GLV constants (assumed, replace with CUDAUtils.h values if available)
-__device__ __constant__ unsigned long long c_n[4] = {
-    0xBFD25E8CD0364141ULL, 0xBAAEDCE6AF48A03BULL, 0xFFFFFFFFFFFFFFFEULL, 0xFFFFFFFFFFFFFFFFULL
-};
-__device__ __constant__ unsigned long long c_beta[4] = {
-    0x6B3C4F7E8DE6997DULL, 0x7CF27B188D034F7EULL, 0x0000000000000000ULL, 0x0000000000000000ULL
-};
-__device__ __constant__ unsigned long long c_b1[4] = {
-    0x0000000000000001ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL
-};
-__device__ __constant__ unsigned long long c_b2[4] = {
-    0x3086D221A7D46BCDULL, 0x483ADA7726A3C465ULL, 0x0000000000000000ULL, 0x0000000000000000ULL
-};
-__device__ __constant__ unsigned long long c_a1[4] = {
-    0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL
-};
-__device__ __constant__ unsigned long long c_a2[4] = {
-    0x0000000000000001ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL
 };
 
 // Namespace for utility functions
@@ -233,9 +213,9 @@ __global__ void fused_ec_hash(
         ++local_hashes;
         MAYBE_WARP_FLUSH();
 
-        bool pref = hash160_prefix_equals(h20, target_prefix);
+        bool pref = hash160_prefix_equals(h20, c_target_prefix);
         if (__any_sync(full_mask, pref)) {
-            if (pref && hash160_matches_prefix_then_full(h20, c_target_hash160, target_prefix)) {
+            if (pref && hash160_matches_prefix_then_full(h20, c_target_hash160, c_target_prefix)) {
                 if (atomicCAS(d_found_flag, FOUND_NONE, FOUND_LOCK) == FOUND_NONE) {
                     d_found_result->threadId = (int)gid;
                     d_found_result->iter = batches_done;
@@ -423,6 +403,27 @@ int main(int argc, char* argv[]) {
     if (batch_size <= 0 || (batch_size & 1) || batch_size > MAX_BATCH_SIZE) {
         std::cerr << "Batch size must be even and <= " << MAX_BATCH_SIZE << "\n";
         return EXIT_FAILURE;
+    }
+
+    // Debug constants from CUDAStructures.h
+    unsigned long long h_n[4], h_beta[4], h_b1[4], h_b2[4], h_a1[4], h_a2[4], h_p[4], h_mu[5];
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_n, c_n, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_beta, c_beta, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_b1, c_b1, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_b2, c_b2, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_a1, c_a1, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_a2, c_a2, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_p, c_p, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_mu, c_mu, 5 * sizeof(unsigned long long)));
+    if (verbose) {
+        std::cout << "c_n: " << std::hex << h_n[0] << ":" << h_n[1] << ":" << h_n[2] << ":" << h_n[3] << std::endl;
+        std::cout << "c_beta: " << std::hex << h_beta[0] << ":" << h_beta[1] << ":" << h_beta[2] << ":" << h_beta[3] << std::endl;
+        std::cout << "c_b1: " << std::hex << h_b1[0] << ":" << h_b1[1] << ":" << h_b1[2] << ":" << h_b1[3] << std::endl;
+        std::cout << "c_b2: " << std::hex << h_b2[0] << ":" << h_b2[1] << ":" << h_b2[2] << ":" << h_b2[3] << std::endl;
+        std::cout << "c_a1: " << std::hex << h_a1[0] << ":" << h_a1[1] << ":" << h_a1[2] << ":" << h_a1[3] << std::endl;
+        std::cout << "c_a2: " << std::hex << h_a2[0] << ":" << h_a2[1] << ":" << h_a2[2] << ":" << h_a2[3] << std::endl;
+        std::cout << "c_p: " << std::hex << h_p[0] << ":" << h_p[1] << ":" << h_p[2] << ":" << h_p[3] << std::endl;
+        std::cout << "c_mu: " << std::hex << h_mu[0] << ":" << h_mu[1] << ":" << h_mu[2] << ":" << h_mu[3] << ":" << h_mu[4] << std::endl;
     }
 
     // Initialize Gx_d and Gy_d with secp256k1 generator point
