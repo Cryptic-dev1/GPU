@@ -492,8 +492,8 @@ int main(int argc, char* argv[]) {
         FoundResult host_result;
         CUDA_CHECK(cudaMemcpy(&host_result, d_found_result, sizeof(FoundResult), cudaMemcpyDeviceToHost));
         std::cout << "\n======== FOUND MATCH! =================================\n";
-        std::cout << "Private Key   : " << formatHex256(host_result.scalar) << "\n";
-        std::cout << "Public Key    : " << formatCompressedPubHex(host_result.Rx, host_result.Ry) << "\n";
+        std::cout << "Private Key   : " << formatHex256(static_cast<const uint64_t*>(host_result.scalar)) << "\n";
+        std::cout << "Public Key    : " << formatCompressedPubHex(static_cast<const uint64_t*>(host_result.Rx), static_cast<const uint64_t*>(host_result.Ry)) << "\n";
         if (verbose) {
             std::cout << "Thread ID     : " << host_result.threadId << "\n";
             std::cout << "Iteration     : " << host_result.iter << "\n";
