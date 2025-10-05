@@ -215,7 +215,7 @@ __host__ __device__ void mul256(const unsigned long long a[4], const unsigned lo
     unsigned long long lo, hi, carry;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        carry = 0;
+        carry = 0ULL;
         #pragma unroll
         for (int j = 0; j < 4; ++j) {
             unsigned long long ai = a[i];
@@ -230,14 +230,14 @@ __host__ __device__ void mul256(const unsigned long long a[4], const unsigned lo
 #endif
             unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1ULL : 0ULL;
-            unsigned long long out_ij = out[i+j];
-            out[i+j] = out_ij + sum;
-            carry += (out[i+j] < out_ij) ? 1ULL : 0ULL;
-            unsigned long long out_ij1 = out[i+j+1];
-            out[i+j+1] = out_ij1 + hi + carry;
-            carry = (out[i+j+1] < hi) ? 1ULL : 0ULL;
+            unsigned long long out_ij = out[i + j];
+            out[i + j] = out_ij + sum;
+            carry += (out[i + j] < out_ij) ? 1ULL : 0ULL;
+            unsigned long long out_ij1 = out[i + j + 1];
+            out[i + j + 1] = out_ij1 + hi + carry;
+            carry = (out[i + j + 1] < hi) ? 1ULL : 0ULL;
         }
-        if (i + 4 < 8) out[i+4] += carry;
+        if (i + 4 < 8) out[i + 4] = carry;
     }
 }
 
@@ -246,7 +246,7 @@ __host__ __device__ void mul_high(const unsigned long long a[4], const unsigned 
     unsigned long long lo, hi, carry;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        carry = 0;
+        carry = 0ULL;
         #pragma unroll
         for (int j = 0; j < 5; ++j) {
             unsigned long long ai = a[i];
@@ -261,22 +261,22 @@ __host__ __device__ void mul_high(const unsigned long long a[4], const unsigned 
 #endif
             unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1ULL : 0ULL;
-            unsigned long long prod_ij = prod[i+j];
-            prod[i+j] = prod_ij + sum;
-            carry += (prod[i+j] < prod_ij) ? 1ULL : 0ULL;
-            unsigned long long prod_ij1 = prod[i+j+1];
-            prod[i+j+1] = prod_ij1 + hi + carry;
-            carry = (prod[i+j+1] < hi) ? 1ULL : 0ULL;
+            unsigned long long prod_ij = prod[i + j];
+            prod[i + j] = prod_ij + sum;
+            carry += (prod[i + j] < prod_ij) ? 1ULL : 0ULL;
+            unsigned long long prod_ij1 = prod[i + j + 1];
+            prod[i + j + 1] = prod_ij1 + hi + carry;
+            carry = (prod[i + j + 1] < hi) ? 1ULL : 0ULL;
         }
-        if (i + 5 < 9) prod[i+5] += carry;
+        if (i + 5 < 9) prod[i + 5] = carry;
     }
     #pragma unroll
-    for (int i = 0; i < 5; ++i) high[i] = prod[i+4];
+    for (int i = 0; i < 5; ++i) high[i] = prod[i + 4];
 }
 
 __host__ __device__ void modred_barrett_opt(const unsigned long long input[8], unsigned long long out[4]) {
     unsigned long long q[5], tmp[8], r[4];
-    mul_high(input+4, c_mu, q);
+    mul_high(input + 4, c_mu, q);
     mul256(q, c_p, tmp);
     fieldSub_opt(input, tmp, r);
     if (ge256(r, c_p)) {
