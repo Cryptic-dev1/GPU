@@ -163,18 +163,18 @@ __global__ void fused_ec_hash(
         }
 
         // Batch inversion
-        if (lane < B) {
+        if (lane < B) { // Fixed: Restrict shared memory writes to batch_size
             fieldCopy(P_local.z, z_values + lane * 4);
         }
         __syncthreads();
         if (lane == 0) {
-            batch_modinv_fermat(z_values, z_values, B);
+            batch_modinv_fermat(z_values, z_values, B); // Ensure batch_modinv_fermat respects B
         }
         __syncthreads();
 
         // Convert to affine and hash
         unsigned long long x_affine[4], y_affine[4];
-        if (lane < B && !P_local.infinity) {
+        if (lane < B && !P_local.infinity) { // Fixed: Restrict computation to batch_size
             unsigned long long zinv[4], zinv2[4];
             fieldCopy(z_values + lane * 4, zinv);
             fieldSqr_opt_device(zinv, zinv2);
@@ -242,10 +242,12 @@ __global__ void precompute_batch_points_kernel(unsigned long long* d_Gx, unsigne
     fieldCopy(G.y, d_Gy + idx * 4);
 
     // Compute 2^(i + batch_size/2) * G for second half
-    pointDoubleJacobian(G, tmp);
-    G = tmp;
-    fieldCopy(G.x, d_Gx + (idx + batch_size / 2) * 4);
-    fieldCopy(G.y, d_Gy + (idx + batch_size / 2) * 4);
+    if (idx + batch_size / 2 < batch_size) { // Fixed: Bounds check for second half
+        pointDoubleJacobian(G, tmp);
+        G = tmp;
+        fieldCopy(G.x, d_Gx + (idx + batch_size / 2) * 4);
+        fieldCopy(G.y, d_Gy + (idx + batch_size / 2) * 4);
+    }
 }
 
 __global__ void compute_phi_base_kernel(const unsigned long long* beta, const unsigned long long* Gx_d, unsigned long long* phi_base_x) {
@@ -434,8 +436,8 @@ int main(int argc, char* argv[]) {
 
     // Precompute batch points on GPU
     unsigned long long *d_Gx, *d_Gy;
-    CUDA_CHECK(cudaMalloc(&d_Gx, (batch_size / 2) * 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_Gy, (batch_size / 2) * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_Gx, batch_size * 4 * sizeof(unsigned long long))); // Fixed: Allocate for full batch_size
+    CUDA_CHECK(cudaMalloc(&d_Gy, batch_size * 4 * sizeof(unsigned long long))); // Fixed: Allocate for full batch_size
     int threads = 256;
     int blocks_batch = (batch_size / 2 + threads - 1) / threads;
     precompute_batch_points_kernel<<<blocks_batch, threads>>>(d_Gx, d_Gy, batch_size);
@@ -454,8 +456,8 @@ int main(int argc, char* argv[]) {
     std::cout << "c_Gx[0]: " << std::hex << h_test_out[0] << std::endl;
     std::cout << "c_Gx[1]: " << std::hex << h_test_out[1] << std::endl;
 
-    CUDA_CHECK(cudaMemcpyToSymbol(c_Gx, d_Gx, (batch_size / 2) * 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemcpyToSymbol(c_Gy, d_Gy, (batch_size / 2) * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyToSymbol(c_Gx, d_Gx, batch_size * 4 * sizeof(unsigned long long))); // Fixed: Copy full batch_size
+    CUDA_CHECK(cudaMemcpyToSymbol(c_Gy, d_Gy, batch_size * 4 * sizeof(unsigned long long))); // Fixed: Copy full batch_size
     CUDA_CHECK(cudaFree(d_Gx));
     CUDA_CHECK(cudaFree(d_Gy));
 
