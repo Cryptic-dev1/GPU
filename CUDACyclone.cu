@@ -13,6 +13,7 @@
 #include <cmath>
 #include <csignal>
 #include <atomic>
+#include <type_traits>
 
 #include "CUDAMath.h"
 #include "sha256.h"
@@ -20,8 +21,23 @@
 #include "CUDAUtils.h"
 #include "CUDAStructures.h"
 
+// Local struct to avoid CUDAStructures.h dependency issues
+struct LocalFoundResult {
+    int threadId;
+    int iter;
+    uint64_t scalar_val[4]; // Renamed to avoid macro conflicts
+    uint64_t Rx_val[4];
+    uint64_t Ry_val[4];
+};
+
+// Verify types at compile time
+static_assert(std::is_same<decltype(LocalFoundResult::scalar_val), uint64_t[4]>::value, "scalar_val must be uint64_t[4]");
+static_assert(std::is_same<decltype(LocalFoundResult::Rx_val), uint64_t[4]>::value, "Rx_val must be uint64_t[4]");
+static_assert(std::is_same<decltype(LocalFoundResult::Ry_val), uint64_t[4]>::value, "Ry_val must be uint64_t[4]");
+
 // Inline function definitions to avoid dependency issues
 std::string formatHex256(const uint64_t limbs[4]) {
+    static_assert(std::is_same<decltype(limbs), const uint64_t[4]>::value, "formatHex256 expects uint64_t[4]");
     std::ostringstream oss;
     oss << std::hex << std::uppercase << std::setfill('0');
     for (int i = 3; i >= 0; --i) {
@@ -31,6 +47,8 @@ std::string formatHex256(const uint64_t limbs[4]) {
 }
 
 std::string formatCompressedPubHex(const uint64_t Rx[4], const uint64_t Ry[4]) {
+    static_assert(std::is_same<decltype(Rx), const uint64_t[4]>::value, "formatCompressedPubHex Rx expects uint64_t[4]");
+    static_assert(std::is_same<decltype(Ry), const uint64_t[4]>::value, "formatCompressedPubHex Ry expects uint64_t[4]");
     uint8_t out[33];
     out[0] = (Ry[0] & 1ULL) ? 0x03 : 0x02;
     int off = 1;
@@ -523,12 +541,21 @@ int main(int argc, char* argv[]) {
     if (h_found_flag == FOUND_READY) {
         FoundResult host_result;
         CUDA_CHECK(cudaMemcpy(&host_result, d_found_result, sizeof(FoundResult), cudaMemcpyDeviceToHost));
+        // Use local struct to ensure type safety
+        LocalFoundResult local_result;
+        local_result.threadId = host_result.threadId;
+        local_result.iter = host_result.iter;
+        for (int i = 0; i < 4; ++i) {
+            local_result.scalar_val[i] = host_result.scalar[i];
+            local_result.Rx_val[i] = host_result.Rx[i];
+            local_result.Ry_val[i] = host_result.Ry[i];
+        }
         std::cout << "\n======== FOUND MATCH! =================================\n";
-        std::cout << "Private Key   : " << formatHex256(host_result.scalar) << "\n";
-        std::cout << "Public Key    : " << formatCompressedPubHex(host_result.Rx, host_result.Ry) << "\n";
+        std::cout << "Private Key   : " << formatHex256(local_result.scalar_val) << "\n";
+        std::cout << "Public Key    : " << formatCompressedPubHex(local_result.Rx_val, local_result.Ry_val) << "\n";
         if (verbose) {
-            std::cout << "Thread ID     : " << host_result.threadId << "\n";
-            std::cout << "Iteration     : " << host_result.iter << "\n";
+            std::cout << "Thread ID     : " << local_result.threadId << "\n";
+            std::cout << "Iteration     : " << local_result.iter << "\n";
         }
     } else {
         if (g_sigint) {
