@@ -34,6 +34,11 @@
 __device__ __constant__ unsigned long long MM64 = 0xD838091DD2253531ULL;
 __device__ __constant__ unsigned long long MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 
+// Utility function for zero check
+__device__ __host__ __forceinline__ bool isZero256(const unsigned long long a[4]) {
+    return (a[3] | a[2] | a[1] | a[0]) == 0ULL;
+}
+
 #define _IsPositive(x) (((long long)(x[3])) >= 0LL)
 #define _IsNegative(x) (((long long)(x[3])) < 0LL)
 #define _IsEqual(a, b) ((a[3] == b[3]) && (a[2] == b[2]) && (a[1] == b[1]) && (a[0] == b[0]))
@@ -259,7 +264,7 @@ __device__ void fieldInvFermat(const unsigned long long a[4], unsigned long long
         fieldSetZero(inv);
         return;
     }
-    unsigned long long t[4], p_minus_2[4] = {0xfffffc2d, 0xffffffff, 0xffffffff, 0xffffffff};
+    unsigned long long t[4], p_minus_2[4] = {0xfffffc2dULL, 0xffffffffULL, 0xffffffffULL, 0xffffffffULL};
     fieldCopy(a, t);
     for (int i = 255; i >= 1; --i) {
         fieldSqr_opt(t, t);

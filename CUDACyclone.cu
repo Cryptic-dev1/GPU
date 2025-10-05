@@ -19,6 +19,9 @@
 #include "CUDAHash.cuh"
 #include "CUDAUtils.h"
 
+// Verify unsigned long long size
+static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bits");
+
 // Local FoundResult struct for both host and device
 struct FoundResult {
     int threadId;
@@ -74,10 +77,6 @@ __device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found
     if (lane == 0) f = load_found_flag_relaxed(d_found_flag);
     f = __shfl_sync(full_mask, f, 0);
     return f == FOUND_READY;
-}
-
-__device__ __host__ __forceinline__ bool isZero256(const unsigned long long a[4]) {
-    return (a[3] | a[2] | a[1] | a[0]) == 0ULL;
 }
 
 __launch_bounds__(256, 2)
