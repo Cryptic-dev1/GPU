@@ -1,4 +1,6 @@
+#include "CUDAMath.h"
 #include "CUDAUtils.h"
+#include "sha256.h"
 #include <cstdint>
 #include <string>
 #include <sstream>
@@ -88,6 +90,22 @@ bool hexToHash160(const std::string& h, uint8_t hash160[20]) {
             return false;
         }
     }
+    return true;
+}
+
+bool decode_p2pkh_address(const std::string& addr, uint8_t out_hash160[20]) {
+    if (addr.empty() || addr[0] != '1') return false;
+
+    std::vector<uint8_t> raw;
+    if (!base58_decode(addr, raw)) return false;
+    if (raw.size() != 25) return false;
+    if (raw[0] != 0x00) return false; // Mainnet P2PKH version byte
+
+    uint8_t check[32];
+    host_sha256::sha256d(raw.data(), 21, check);
+    if (!std::equal(check, check + 4, raw.data() + 21)) return false;
+
+    std::memcpy(out_hash160, raw.data() + 1, 20);
     return true;
 }
 

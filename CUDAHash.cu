@@ -233,7 +233,6 @@ __device__ void addBigEndian32(uint8_t* data32, uint64_t offset) {
 
 __device__ void batch_getHash160_33bytes(const uint8_t* pubkeys, uint8_t* hashes, int n) {
     extern __shared__ uint32_t batch_shared_mem[];
-    uint32_t *s_state = batch_shared_mem;
     for (int idx = threadIdx.x; idx < n; idx += blockDim.x) {
         const uint8_t* pubkey = pubkeys + idx * 33;
         uint8_t* hash = hashes + idx * 20;
