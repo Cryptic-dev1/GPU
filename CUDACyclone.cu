@@ -238,6 +238,10 @@ __global__ void precompute_batch_points_kernel(unsigned long long* d_Gx, unsigne
     fieldCopy(G.y, d_Gy + (idx + batch_size / 2) * 4);
 }
 
+__global__ void compute_phi_base_kernel(const unsigned long long* beta, const unsigned long long* Gx_d, unsigned long long* phi_base_x) {
+    fieldMul_opt(beta, Gx_d, phi_base_x);
+}
+
 std::string human_bytes(size_t bytes) {
     const char* units[] = {"B", "KB", "MB", "GB", "TB"};
     int unit_idx = 0;
@@ -379,10 +383,24 @@ int main(int argc, char* argv[]) {
     fieldCopy(Gy_d, h_base.y);
     fieldSetOne(h_base.z);
     h_base.infinity = false;
-    fieldMul_opt(c_beta, Gx_d, h_phi_base.x);
+
+    // Compute phi_base.x on GPU
+    unsigned long long *d_beta, *d_Gx_d, *d_phi_base_x;
+    CUDA_CHECK(cudaMalloc(&d_beta, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_Gx_d, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_phi_base_x, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyToSymbol(c_beta, c_beta, 4 * sizeof(unsigned long long))); // Copy c_beta to device constant
+    CUDA_CHECK(cudaMemcpy(d_Gx_d, Gx_d, 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
+    compute_phi_base_kernel<<<1, 1>>>(c_beta, d_Gx_d, d_phi_base_x);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaMemcpy(h_phi_base.x, d_phi_base_x, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_beta));
+    CUDA_CHECK(cudaFree(d_Gx_d));
+    CUDA_CHECK(cudaFree(d_phi_base_x));
     fieldCopy(Gy_d, h_phi_base.y);
     fieldSetOne(h_phi_base.z);
     h_phi_base.infinity = false;
+
     precompute_g_table_gpu(h_base, h_phi_base, &d_pre_Gx, &d_pre_Gy, &d_pre_phiGx, &d_pre_phiGy);
 
     // Precompute batch points on GPU
