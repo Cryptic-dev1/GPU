@@ -5,6 +5,8 @@
 #include <string>
 #include <sstream>
 
+#define WARP_SIZE 32
+
 __host__ void add256_u64(const unsigned long long a[4], unsigned long long b, unsigned long long out[4]);
 __host__ void add256(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]);
 __host__ void sub256(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]);

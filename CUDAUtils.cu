@@ -1,4 +1,3 @@
-#include "CUDAMath.h"
 #include "CUDAUtils.h"
 #include "sha256.h"
 #include <cstdint>
