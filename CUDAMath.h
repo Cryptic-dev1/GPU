@@ -173,21 +173,23 @@ __device__ void fieldSub_opt(const uint64_t a[4], const uint64_t b[4], uint64_t 
 
 __device__ void mul256(const uint64_t a[4], const uint64_t b[4], uint64_t out[8]) {
     fieldSetZero(out);
-    uint64_t lo, hi, carry, temp;
+    uint64_t lo, hi, carry;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
         carry = 0;
         #pragma unroll
         for (int j = 0; j < 4; ++j) {
-            uint64_t ai = a[i], bj = b[j], out_ij = out[i+j], out_ij1 = out[i+j+1];
+            uint64_t ai = a[i];
+            uint64_t bj = b[j];
             UMULLO(lo, ai, bj);
             UMULHI(hi, ai, bj);
-            UADDO(temp, lo, carry);
-            UADD1(hi, 0);
-            UADDO(out_ij, out_ij, temp);
-            UADDC(out_ij1, out_ij1, hi);
-            out[i+j] = out_ij;
-            out[i+j+1] = out_ij1;
+            uint64_t sum = lo + carry;
+            carry = (sum < lo) ? 1 : 0;
+            uint64_t out_ij = out[i+j];
+            out[i+j] = out_ij + sum;
+            carry += (out[i+j] < out_ij) ? 1 : 0;
+            uint64_t out_ij1 = out[i+j+1];
+            out[i+j+1] = out_ij1 + hi + carry;
             carry = (out[i+j+1] < hi) ? 1 : 0;
         }
         if (i + 4 < 8) out[i+4] += carry;
@@ -196,21 +198,23 @@ __device__ void mul256(const uint64_t a[4], const uint64_t b[4], uint64_t out[8]
 
 __device__ void mul_high(const uint64_t a[4], const uint64_t b[5], uint64_t high[5]) {
     uint64_t prod[9] = {0};
-    uint64_t lo, hi, carry, temp;
+    uint64_t lo, hi, carry;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
         carry = 0;
         #pragma unroll
         for (int j = 0; j < 5; ++j) {
-            uint64_t ai = a[i], bj = b[j], prod_ij = prod[i+j], prod_ij1 = prod[i+j+1];
+            uint64_t ai = a[i];
+            uint64_t bj = b[j];
             UMULLO(lo, ai, bj);
             UMULHI(hi, ai, bj);
-            UADDO(temp, lo, carry);
-            UADD1(hi, 0);
-            UADDO(prod_ij, prod_ij, temp);
-            UADDC(prod_ij1, prod_ij1, hi);
-            prod[i+j] = prod_ij;
-            prod[i+j+1] = prod_ij1;
+            uint64_t sum = lo + carry;
+            carry = (sum < lo) ? 1 : 0;
+            uint64_t prod_ij = prod[i+j];
+            prod[i+j] = prod_ij + sum;
+            carry += (prod[i+j] < prod_ij) ? 1 : 0;
+            uint64_t prod_ij1 = prod[i+j+1];
+            prod[i+j+1] = prod_ij1 + hi + carry;
             carry = (prod[i+j+1] < hi) ? 1 : 0;
         }
         if (i + 5 < 9) prod[i+5] += carry;
