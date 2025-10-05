@@ -37,23 +37,6 @@ static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bi
 __device__ __constant__ unsigned long long MM64 = 0xD838091DD2253531ULL;
 __device__ __constant__ unsigned long long MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 
-// secp256k1 curve order and GLV constants
-__device__ __constant__ unsigned long long c_n[4] = {
-    0xBFD25E8CD0364141ULL, 0xBAAEDCE6AF48A03BULL, 0xFFFFFFFFFFFFFFFEULL, 0xFFFFFFFFFFFFFFFFULL
-};
-__device__ __constant__ unsigned long long c_b1[4] = {
-    0x5D543A95414E7F10ULL, 0x1E6EF201F7413479ULL, 0x2A470BF78A424D26ULL, 0x30C81C46A35CE411ULL
-};
-__device__ __constant__ unsigned long long c_b2[4] = {
-    0xA2ABC15B6AC7E8FAULL, 0x5C91F3DE0B9E7F86ULL, 0xD5B8F48C75BBDCD9ULL, 0xCF37E3B95CA33BEEULL
-};
-__device__ __constant__ unsigned long long c_a1[4] = {
-    0x3086D221A7D46BCDULL, 0xD7C134AA26436686ULL, 0xE65C3CF3C9000000ULL, 0xE65C3CF3C9000000ULL
-};
-__device__ __constant__ unsigned long long c_a2[4] = {
-    0xCF792DDE058B9343ULL, 0x283ECB55D9BC9979ULL, 0x19A3C30C36FFFFFFULL, 0x19A3C30C36FFFFFFULL
-};
-
 // Host-side copy of c_p
 static const unsigned long long host_c_p[4] = {0xfffffc2fULL, 0xffffffffULL, 0xffffffffULL, 0xffffffffULL};
 
@@ -439,23 +422,21 @@ __device__ void batch_modinv_fermat(const unsigned long long* a, unsigned long l
     unsigned long long *prefix = shared_mem;
     unsigned long long prod[4], tmp[4];
     int tid = threadIdx.x % WARP_SIZE;
-    bool all_zero = true;
     if (tid == 0) {
         fieldSetOne(prefix);
         for (int i = 0; i < n; ++i) {
-            if (i + 1 <= n) {
+            if (i + 1 <= n) { // Bounds check
                 if (isZero256(a + i*4)) {
                     fieldSetZero(prefix + (i+1)*4);
                 } else {
                     fieldMul_opt_device(prefix + i*4, a + i*4, prefix + (i+1)*4);
-                    all_zero = false;
                 }
             }
         }
-        if (all_zero) {
-            fieldSetZero(prod);
-        } else {
+        if (!isZero256(prefix + n*4)) {
             fieldInvFermat_device(prefix + n*4, prod);
+        } else {
+            fieldSetZero(prod);
         }
         fieldCopy(prod, tmp);
         for (int i = n-1; i >= 0; --i) {
@@ -488,11 +469,6 @@ __device__ void div512_256(const unsigned long long num[8], const unsigned long 
 
 // GLV Endomorphism
 __device__ void split_glv(const unsigned long long scalar[4], unsigned long long k1[4], unsigned long long k2[4]) {
-    if (isZero256(scalar)) {
-        fieldSetZero(k1);
-        fieldSetZero(k2);
-        return;
-    }
     unsigned long long num[8], half_n[4], q1[4], q2[4], tmp1[4], tmp2[4], rem[4];
     fieldCopy(c_n, half_n);
     lsr256(half_n, half_n, 1);
@@ -518,12 +494,6 @@ __device__ void split_glv(const unsigned long long scalar[4], unsigned long long
     fieldSub_opt_device(tmp1, tmp2, k2);
     if (_IsNegative(k2)) {
         fieldAdd_opt_device(k2, c_n, k2);
-    }
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("split_glv: scalar=%llx:%llx:%llx:%llx, q1=%llx:%llx:%llx:%llx, q2=%llx:%llx:%llx:%llx\n",
-               scalar[0], scalar[1], scalar[2], scalar[3],
-               q1[0], q1[1], q1[2], q1[3],
-               q2[0], q2[1], q2[2], q2[3]);
     }
 }
 
@@ -695,11 +665,6 @@ __device__ uint32_t get_window(const unsigned long long a[4], int pos) {
 }
 
 __device__ void scalarMulBaseJacobian(const unsigned long long scalar_le[4], unsigned long long outX[4], unsigned long long outY[4], unsigned long long* d_pre_Gx, unsigned long long* d_pre_Gy, unsigned long long* d_pre_phiGx, unsigned long long* d_pre_phiGy) {
-    if (isZero256(scalar_le)) {
-        fieldSetZero(outX);
-        fieldSetZero(outY);
-        return;
-    }
     unsigned long long k1[4], k2[4];
     split_glv(scalar_le, k1, k2);
     if (threadIdx.x == 0 && blockIdx.x == 0) {
