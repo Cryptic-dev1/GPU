@@ -34,6 +34,9 @@
 __device__ __constant__ unsigned long long MM64 = 0xD838091DD2253531ULL;
 __device__ __constant__ unsigned long long MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 
+// Host-side copy of c_p for __host__ execution
+static const unsigned long long host_c_p[4] = {0xfffffc2fULL, 0xffffffffULL, 0xffffffffULL, 0xffffffffULL};
+
 // Utility function for zero check
 __host__ __device__ __forceinline__ bool isZero256(const unsigned long long a[4]) {
     return (a[3] | a[2] | a[1] | a[0]) == 0ULL;
@@ -150,12 +153,21 @@ __host__ __device__ void fieldAdd_opt(const unsigned long long a[4], const unsig
         out[i] = temp;
         carry = (temp < a[i] || (temp == a[i] && b[i] != 0)) ? 1 : 0;
     }
+#ifdef __CUDA_ARCH__
     if (carry || ge256(out, c_p)) {
         USUBO(out[0], out[0], c_p[0]);
         USUBC(out[1], out[1], c_p[1]);
         USUBC(out[2], out[2], c_p[2]);
         USUB(out[3], out[3], c_p[3]);
     }
+#else
+    if (carry || ge256(out, host_c_p)) {
+        USUBO(out[0], out[0], host_c_p[0]);
+        USUBC(out[1], out[1], host_c_p[1]);
+        USUBC(out[2], out[2], host_c_p[2]);
+        USUB(out[3], out[3], host_c_p[3]);
+    }
+#endif
 }
 
 __host__ __device__ void fieldSub_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
@@ -167,15 +179,24 @@ __host__ __device__ void fieldSub_opt(const unsigned long long a[4], const unsig
         out[i] = temp;
         borrow = (temp > a[i] || (temp == a[i] && b[i] != 0)) ? 1 : 0;
     }
+#ifdef __CUDA_ARCH__
     if (borrow) {
         UADDO(out[0], out[0], c_p[0]);
         UADDC(out[1], out[1], c_p[1]);
         UADDC(out[2], out[2], c_p[2]);
         UADD(out[3], out[3], c_p[3]);
     }
+#else
+    if (borrow) {
+        UADDO(out[0], out[0], host_c_p[0]);
+        UADDC(out[1], out[1], host_c_p[1]);
+        UADDC(out[2], out[2], host_c_p[2]);
+        UADD(out[3], out[3], host_c_p[3]);
+    }
+#endif
 }
 
-__device__ void mul256(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[8]) {
+__host__ __device__ void mul256(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[8]) {
     fieldSetZero(out);
     unsigned long long lo, hi, carry;
     #pragma unroll
@@ -200,7 +221,7 @@ __device__ void mul256(const unsigned long long a[4], const unsigned long long b
     }
 }
 
-__device__ void mul_high(const unsigned long long a[4], const unsigned long long b[5], unsigned long long high[5]) {
+__host__ __device__ void mul_high(const unsigned long long a[4], const unsigned long long b[5], unsigned long long high[5]) {
     unsigned long long prod[9] = {0};
     unsigned long long lo, hi, carry;
     #pragma unroll
@@ -227,7 +248,7 @@ __device__ void mul_high(const unsigned long long a[4], const unsigned long long
     for (int i = 0; i < 5; ++i) high[i] = prod[i+4];
 }
 
-__device__ void modred_barrett_opt(const unsigned long long input[8], unsigned long long out[4]) {
+__host__ __device__ void modred_barrett_opt(const unsigned long long input[8], unsigned long long out[4]) {
     unsigned long long q[5], tmp[8], r[4];
     mul_high(input+4, c_mu, q);
     mul256(q, c_p, tmp);
@@ -247,11 +268,11 @@ __host__ __device__ void fieldMul_opt(const unsigned long long a[4], const unsig
     modred_barrett_opt(prod, out);
 }
 
-__device__ void fieldSqr_opt(const unsigned long long a[4], unsigned long long out[4]) {
+__host__ __device__ void fieldSqr_opt(const unsigned long long a[4], unsigned long long out[4]) {
     fieldMul_opt(a, a, out);
 }
 
-__device__ void fieldNeg(const unsigned long long a[4], unsigned long long out[4]) {
+__host__ __device__ void fieldNeg(const unsigned long long a[4], unsigned long long out[4]) {
     if (isZero256(a)) {
         fieldSetZero(out);
         return;
@@ -259,7 +280,7 @@ __device__ void fieldNeg(const unsigned long long a[4], unsigned long long out[4
     fieldSub_opt(c_p, a, out);
 }
 
-__device__ void fieldInvFermat(const unsigned long long a[4], unsigned long long inv[4]) {
+__host__ __device__ void fieldInvFermat(const unsigned long long a[4], unsigned long long inv[4]) {
     if (isZero256(a)) {
         fieldSetZero(inv);
         return;
@@ -345,7 +366,7 @@ __device__ void split_glv(const unsigned long long scalar[4], unsigned long long
 }
 
 // Jacobian Point Operations
-__device__ void pointSetInfinity(JacobianPoint &P) {
+__host__ __device__ void pointSetInfinity(JacobianPoint &P) {
     fieldSetZero(P.x);
     fieldSetZero(P.y);
     fieldSetZero(P.z);

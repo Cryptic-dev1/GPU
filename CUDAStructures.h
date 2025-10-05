@@ -53,7 +53,7 @@ __device__ int found_flag = 0;
     std::cerr << "CUDA Error: " << cudaGetErrorString(err) << " at " << __FILE__ << ":" << __LINE__ << std::endl; exit(EXIT_FAILURE); } } while(0)
 
 // Utility function for ge256
-__device__ bool ge256(const unsigned long long a[4], const unsigned long long b[4]);
+__host__ __device__ bool ge256(const unsigned long long a[4], const unsigned long long b[4]);
 
 __global__ void scalarMulKernelBase(const unsigned long long* scalars_in, unsigned long long* outX, unsigned long long* outY, int N, unsigned long long* d_pre_Gx, unsigned long long* d_pre_Gy, unsigned long long* d_pre_phiGx, unsigned long long* d_pre_phiGy);
 __global__ void precompute_table_kernel(JacobianPoint base, unsigned long long* pre_x, unsigned long long* pre_y, unsigned long long size);
