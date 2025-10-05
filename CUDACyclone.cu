@@ -78,6 +78,15 @@ __device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found
     return f == FOUND_READY;
 }
 
+// Test kernel to verify c_Gx and c_Gy
+__global__ void test_constant_memory(unsigned long long* out, int batch_size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= batch_size / 2) return;
+    for (int i = 0; i < 4; ++i) {
+        out[idx * 4 + i] = c_Gx[idx * 4 + i];
+    }
+}
+
 __launch_bounds__(256, 2)
 __global__ void fused_ec_hash(
     JacobianPoint* __restrict__ P,
@@ -306,7 +315,7 @@ int main(int argc, char* argv[]) {
     // Argument parsing
     unsigned long long range_start[4] = {0}, range_end[4] = {0}, range_len[4];
     uint8_t target_hash160[20] = {0};
-    int blocks = 512, threadsPerBlock = 256, batch_size = 8;
+    int blocks = 64, threadsPerBlock = 128, batch_size = 8;
     uint32_t max_batches_per_launch = 64;
     std::string range_str, address_str, grid_str;
     bool verbose = false;
@@ -433,13 +442,17 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaDeviceSynchronize());
     std::cout << "precompute_batch_points_kernel completed" << std::endl;
 
-    // Debug c_Gx and c_Gy initialization
-    unsigned long long h_c_Gx[batch_size / 2 * 4];
-    unsigned long long h_c_Gy[batch_size / 2 * 4];
-    CUDA_CHECK(cudaMemcpyFromSymbol(h_c_Gx, c_Gx, (batch_size / 2) * 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemcpyFromSymbol(h_c_Gy, c_Gy, (batch_size / 2) * 4 * sizeof(unsigned long long)));
-    std::cout << "c_Gx[0]: " << std::hex << h_c_Gx[0] << std::endl;
-    std::cout << "c_Gy[0]: " << std::hex << h_c_Gy[0] << std::endl;
+    // Test c_Gx and c_Gy
+    unsigned long long *d_test_out;
+    CUDA_CHECK(cudaMalloc(&d_test_out, (batch_size / 2) * 4 * sizeof(unsigned long long)));
+    test_constant_memory<<<1, threads>>>(d_test_out, batch_size);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    std::cout << "test_constant_memory completed" << std::endl;
+    unsigned long long h_test_out[batch_size / 2 * 4];
+    CUDA_CHECK(cudaMemcpy(h_test_out, d_test_out, (batch_size / 2) * 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_test_out));
+    std::cout << "c_Gx[0]: " << std::hex << h_test_out[0] << std::endl;
+    std::cout << "c_Gx[1]: " << std::hex << h_test_out[1] << std::endl;
 
     CUDA_CHECK(cudaMemcpyToSymbol(c_Gx, d_Gx, (batch_size / 2) * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemcpyToSymbol(c_Gy, d_Gy, (batch_size / 2) * 4 * sizeof(unsigned long long)));
@@ -505,6 +518,7 @@ int main(int argc, char* argv[]) {
         h_P[i].infinity = isZero256(h_outX + i * 4) && isZero256(h_outY + i * 4);
     }
     CUDA_CHECK(cudaMemcpy(d_P, h_P, threadsTotal * sizeof(JacobianPoint), cudaMemcpyHostToDevice));
+    std::cout << "d_P[0].x[0]: " << std::hex << h_P[0].x[0] << std::endl;
     delete[] h_P; delete[] h_outX; delete[] h_outY;
     CUDA_CHECK(cudaFree(d_outX));
     CUDA_CHECK(cudaFree(d_outY));
