@@ -57,14 +57,85 @@ __device__ __constant__ uint64_t MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 }
 
 // Field Utility Functions
-__device__ void fieldSetZero(uint64_t a[4]);
-__device__ void fieldSetOne(uint64_t a[4]);
-__device__ void fieldCopy(const uint64_t a[4], uint64_t b[4]);
-__device__ void lsl256(uint64_t a[4], uint64_t out[4], int n);
-__device__ void lsr256(uint64_t a[4], uint64_t out[4], int n);
-__device__ void lsl512(const uint64_t a[4], int n, uint64_t out[8]);
-__device__ bool ge512(const uint64_t a[8], const uint64_t b[8]);
-__device__ void sub512(const uint64_t a[8], const uint64_t b[8], uint64_t out[8]);
+__device__ void fieldSetZero(uint64_t a[4]) {
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) a[i] = 0ULL;
+
+__device__ void fieldSetOne(uint64_t a[4]) {
+    a[0] = 1ULL;
+    #pragma unroll
+    for (int i = 1; i < 4; ++i) a[i] = 0ULL;
+}
+
+__device__ void fieldCopy(const uint64_t a[4], uint64_t b[4]) {
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) b[i] = a[i];
+}
+
+__device__ void lsl256(uint64_t a[4], uint64_t out[4], int n) {
+    if (n >= 256) {
+        fieldSetZero(out);
+        return;
+    }
+    int limb_shift = n / 64;
+    int bit_shift = n % 64;
+    fieldSetZero(out);
+    for (int i = 0; i < 4 - limb_shift; ++i) {
+        out[i + limb_shift] = a[i] << bit_shift;
+        if (bit_shift && i + limb_shift + 1 < 4) {
+            out[i + limb_shift + 1] |= a[i] >> (64 - bit_shift);
+        }
+    }
+}
+
+__device__ void lsr256(uint64_t a[4], uint64_t out[4], int n) {
+    if (n >= 256) {
+        fieldSetZero(out);
+        return;
+    }
+    int limb_shift = n / 64;
+    int bit_shift = n % 64;
+    fieldSetZero(out);
+    for (int i = limb_shift; i < 4; ++i) {
+        out[i - limb_shift] = a[i] >> bit_shift;
+        if (bit_shift && i - limb_shift - 1 >= 0) {
+            out[i - limb_shift - 1] |= a[i] << (64 - bit_shift);
+        }
+    }
+}
+
+__device__ void lsl512(const uint64_t a[4], int n, uint64_t out[8]) {
+    fieldSetZero(out);
+    int limb = n / 64;
+    int bit_shift = n % 64;
+    for (int i = 0; i < 4; ++i) {
+        if (i + limb < 8) {
+            out[i + limb] = a[i] << bit_shift;
+            if (bit_shift && i + limb + 1 < 8) {
+                out[i + limb + 1] |= a[i] >> (64 - bit_shift);
+            }
+        }
+    }
+}
+
+__device__ bool ge512(const uint64_t a[8], const uint64_t b[8]) {
+    for (int i = 7; i >= 0; --i) {
+        if (a[i] > b[i]) return true;
+        if (a[i] < b[i]) return false;
+    }
+    return true;
+}
+
+__device__ void sub512(const uint64_t a[8], const uint64_t b[8], uint64_t out[8]) {
+    uint64_t borrow = 0, temp;
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        USUBO(temp, a[i], b[i]);
+        USUB1(temp, borrow);
+        out[i] = temp;
+        borrow = (temp > a[i] || (temp == a[i] && b[i] != 0)) ? 1 : 0;
+    }
+}
 
 // Optimized Field Operations
 __device__ void fieldAdd_opt(const uint64_t a[4], const uint64_t b[4], uint64_t out[4]) {
@@ -261,14 +332,230 @@ __device__ void split_glv(const uint64_t scalar[4], uint64_t k1[4], uint64_t k2[
 }
 
 // Jacobian Point Operations
-__device__ void pointSetInfinity(JacobianPoint &P);
-__device__ void pointSetG(JacobianPoint &P);
-__device__ void pointToAffine(const JacobianPoint &P, uint64_t outX[4], uint64_t outY[4]);
-__device__ void pointDoubleJacobian(const JacobianPoint &P, JacobianPoint &R);
-__device__ void pointAddJacobian(const JacobianPoint &P, const JacobianPoint &Q, JacobianPoint &R);
-__device__ void pointAddMixed(const JacobianPoint &P, const uint64_t Qx[4], const uint64_t Qy[4], bool Qinf, JacobianPoint &R);
-__device__ int find_msb(const uint64_t a[4]);
-__device__ uint32_t get_window(const uint64_t a[4], int pos);
-__device__ void scalarMulBaseJacobian(const uint64_t scalar_le[4], uint64_t outX[4], uint64_t outY[4], uint64_t* d_pre_Gx, uint64_t* d_pre_Gy, uint64_t* d_pre_phiGx, uint64_t* d_pre_phiGy);
+__device__ void pointSetInfinity(JacobianPoint &P) {
+    fieldSetZero(P.x);
+    fieldSetZero(P.y);
+    fieldSetZero(P.z);
+    P.infinity = true;
+}
+
+__device__ void pointSetG(JacobianPoint &P) {
+    fieldCopy(Gx_d, P.x);
+    fieldCopy(Gy_d, P.y);
+    fieldSetOne(P.z);
+    P.infinity = false;
+}
+
+__device__ void pointToAffine(const JacobianPoint &P, uint64_t outX[4], uint64_t outY[4]) {
+    if (P.infinity || _IsZero(P.z)) {
+        fieldSetZero(outX);
+        fieldSetZero(outY);
+        return;
+    }
+    uint64_t zinv[4], zinv2[4];
+    fieldInvFermat(P.z, zinv);
+    fieldSqr_opt(zinv, zinv2);
+    fieldMul_opt(P.x, zinv2, outX);
+    fieldMul_opt(zinv, zinv2, zinv2);
+    fieldMul_opt(P.y, zinv2, outY);
+}
+
+__device__ void pointDoubleJacobian(const JacobianPoint &P, JacobianPoint &R) {
+    if (P.infinity || _IsZero(P.z)) {
+        pointSetInfinity(R);
+        return;
+    }
+    uint64_t u[4], m[4], s[4], t[4], zz[4], tmp[4];
+    fieldSqr_opt(P.y, u);
+    fieldSqr_opt(P.z, zz);
+    fieldSqr_opt(u, t);
+    fieldMul_opt(P.x, u, s);
+    fieldAdd_opt(s, s, s);
+    fieldSqr_opt(P.x, tmp);
+    fieldAdd_opt(tmp, tmp, m);
+    fieldAdd_opt(m, tmp, m);
+    fieldSqr_opt(m, R.x);
+    fieldSub_opt(R.x, s, R.x);
+    fieldSub_opt(R.x, s, R.x);
+    fieldAdd_opt(P.y, P.z, R.z);
+    fieldSqr_opt(R.z, R.z);
+    fieldSub_opt(R.z, u, R.z);
+    fieldSub_opt(R.z, zz, R.z);
+    fieldSub_opt(s, R.x, tmp);
+    fieldMul_opt(m, tmp, R.y);
+    fieldAdd_opt(t, t, tmp);
+    fieldAdd_opt(tmp, tmp, tmp);
+    fieldSub_opt(R.y, tmp, R.y);
+    R.infinity = false;
+}
+
+__device__ void pointAddJacobian(const JacobianPoint &P, const JacobianPoint &Q, JacobianPoint &R) {
+    if (P.infinity || _IsZero(P.z)) {
+        R = Q;
+        return;
+    }
+    if (Q.infinity || _IsZero(Q.z)) {
+        R = P;
+        return;
+    }
+    uint64_t z1z1[4], z2z2[4], u1[4], u2[4], s1[4], s2[4], h[4], i[4], j[4], r[4], v[4], tmp[4];
+    fieldSqr_opt(P.z, z1z1);
+    fieldSqr_opt(Q.z, z2z2);
+    fieldMul_opt(P.x, z2z2, u1);
+    fieldMul_opt(Q.x, z1z1, u2);
+    fieldMul_opt(P.y, Q.z, s1);
+    fieldMul_opt(s1, z2z2, s1);
+    fieldMul_opt(Q.y, P.z, s2);
+    fieldMul_opt(s2, z1z1, s2);
+    if (_IsEqual(u1, u2)) {
+        if (_IsEqual(s1, s2)) {
+            pointDoubleJacobian(P, R);
+        } else {
+            pointSetInfinity(R);
+        }
+        return;
+    }
+    fieldSub_opt(u2, u1, h);
+    fieldAdd_opt(h, h, i);
+    fieldSqr_opt(i, i);
+    fieldMul_opt(i, h, j);
+    fieldSub_opt(s2, s1, r);
+    fieldAdd_opt(r, r, r);
+    fieldMul_opt(u1, i, v);
+    fieldSqr_opt(r, R.x);
+    fieldSub_opt(R.x, j, R.x);
+    fieldSub_opt(R.x, v, R.x);
+    fieldSub_opt(R.x, v, R.x);
+    fieldSub_opt(v, R.x, tmp);
+    fieldMul_opt(r, tmp, R.y);
+    fieldMul_opt(s1, j, tmp);
+    fieldAdd_opt(tmp, tmp, tmp);
+    fieldSub_opt(R.y, tmp, R.y);
+    fieldAdd_opt(P.z, Q.z, R.z);
+    fieldSqr_opt(R.z, R.z);
+    fieldSub_opt(R.z, z1z1, R.z);
+    fieldSub_opt(R.z, z2z2, R.z);
+    fieldMul_opt(R.z, h, R.z);
+    R.infinity = false;
+}
+
+__device__ void pointAddMixed(const JacobianPoint &P, const uint64_t Qx[4], const uint64_t Qy[4], bool Qinf, JacobianPoint &R) {
+    if (P.infinity || _IsZero(P.z)) {
+        if (Qinf) {
+            pointSetInfinity(R);
+        } else {
+            fieldCopy(Qx, R.x);
+            fieldCopy(Qy, R.y);
+            fieldSetOne(R.z);
+            R.infinity = false;
+        }
+        return;
+    }
+    if (Qinf) {
+        R = P;
+        return;
+    }
+    uint64_t z1z1[4], u2[4], s2[4], h[4], i[4], j[4], r[4], v[4], tmp[4];
+    fieldSqr_opt(P.z, z1z1);
+    fieldMul_opt(Qx, z1z1, u2);
+    fieldMul_opt(Qy, P.z, s2);
+    fieldMul_opt(s2, z1z1, s2);
+    fieldSub_opt(u2, P.x, h);
+    fieldAdd_opt(h, h, i);
+    fieldSqr_opt(i, i);
+    fieldMul_opt(i, h, j);
+    fieldSub_opt(s2, P.y, r);
+    fieldAdd_opt(r, r, r);
+    fieldMul_opt(P.x, i, v);
+    fieldSqr_opt(r, R.x);
+    fieldSub_opt(R.x, j, R.x);
+    fieldSub_opt(R.x, v, R.x);
+    fieldSub_opt(R.x, v, R.x);
+    fieldSub_opt(v, R.x, tmp);
+    fieldMul_opt(r, tmp, R.y);
+    fieldMul_opt(P.y, j, tmp);
+    fieldAdd_opt(tmp, tmp, tmp);
+    fieldSub_opt(R.y, tmp, R.y);
+    fieldMul_opt(P.z, h, R.z);
+    R.infinity = false;
+}
+
+__device__ int find_msb(const uint64_t a[4]) {
+    for (int i = 3; i >= 0; --i) {
+        if (a[i] != 0) return i * 64 + 63 - __clzll(a[i]);
+    }
+    return -1;
+}
+
+__device__ uint32_t get_window(const uint64_t a[4], int pos) {
+    int limb = pos >> 6;
+    int shift = pos & 63;
+    if (limb >= 4) return 0;
+    uint64_t bits = a[limb] >> shift;
+    if (shift > 64 - PRECOMPUTE_WINDOW && limb < 3) {
+        bits |= a[limb+1] << (64 - shift);
+    }
+    return bits & ((1ULL << PRECOMPUTE_WINDOW) - 1);
+}
+
+__device__ void scalarMulBaseJacobian(const uint64_t scalar_le[4], uint64_t outX[4], uint64_t outY[4], uint64_t* d_pre_Gx, uint64_t* d_pre_Gy, uint64_t* d_pre_phiGx, uint64_t* d_pre_phiGy) {
+    uint64_t k1[4], k2[4];
+    split_glv(scalar_le, k1, k2);
+    JacobianPoint R1, R2, R;
+    pointSetInfinity(R1);
+    pointSetInfinity(R2);
+    int msb1 = find_msb(k1);
+    int msb2 = find_msb(k2);
+    int msb = max(msb1, msb2);
+    for (int pos = msb - (msb % PRECOMPUTE_WINDOW); pos >= 0; pos -= PRECOMPUTE_WINDOW) {
+        #pragma unroll
+        for (int i = 0; i < PRECOMPUTE_WINDOW; ++i) {
+            pointDoubleJacobian(R1, R1);
+            pointDoubleJacobian(R2, R2);
+        }
+        uint32_t w1 = get_window(k1, pos);
+        if (w1) {
+            JacobianPoint P;
+            fieldCopy(d_pre_Gx + w1 * 4, P.x);
+            fieldCopy(d_pre_Gy + w1 * 4, P.y);
+            fieldSetOne(P.z);
+            P.infinity = false;
+            pointAddMixed(R1, P.x, P.y, P.infinity, R1);
+        }
+        uint32_t w2 = get_window(k2, pos);
+        if (w2) {
+            JacobianPoint P;
+            fieldCopy(d_pre_phiGx + w2 * 4, P.x);
+            fieldCopy(d_pre_phiGy + w2 * 4, P.y);
+            fieldSetOne(P.z);
+            P.infinity = false;
+            pointAddMixed(R2, P.x, P.y, P.infinity, R2);
+        }
+    }
+    fieldMul_opt(R2.x, c_beta, R2.x);
+    pointAddJacobian(R1, R2, R);
+    pointToAffine(R, outX, outY);
+}
+
+__global__ void scalarMulKernelBase(const uint64_t* scalars_in, uint64_t* outX, uint64_t* outY, int N, uint64_t* d_pre_Gx, uint64_t* d_pre_Gy, uint64_t* d_pre_phiGx, uint64_t* d_pre_phiGy) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N) return;
+    scalarMulBaseJacobian(scalars_in + idx*4, outX + idx*4, outY + idx*4, d_pre_Gx, d_pre_Gy, d_pre_phiGx, d_pre_phiGy);
+}
+
+__global__ void precompute_table_kernel(JacobianPoint base, uint64_t* pre_x, uint64_t* pre_y, uint64_t size) {
+    uint64_t idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    JacobianPoint P = base;
+    for (uint64_t bit = 0; bit < idx; ++bit) {
+        if (bit % 2 == 0) {
+            pointDoubleJacobian(P, P);
+        } else {
+            pointAddJacobian(P, base, P);
+        }
+    }
+    fieldCopy(P.x, pre_x + idx * 4);
+    fieldCopy(P.y, pre_y + idx * 4);
+}
 
 #endif // CUDA_MATH_H
