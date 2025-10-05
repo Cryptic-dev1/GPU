@@ -262,7 +262,7 @@ void precompute_g_table_gpu(JacobianPoint base, JacobianPoint phi_base, unsigned
     size_t free_mem, total_mem;
     CUDA_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
     if (free_mem < total_size + 1e9) { // Reserve ~1GB for other allocations
-        std::cerr << "Insufficient VRAM for 2^24 precomputed tables (~" << human_bytes(total_size) << ")\n";
+        std::cerr << "Insufficient VRAM for 2^16 precomputed tables (~" << human_bytes(total_size) << ")\n";
         exit(EXIT_FAILURE);
     }
 
@@ -375,19 +375,13 @@ int main(int argc, char* argv[]) {
 
     // Initialize Gx_d and Gy_d with secp256k1 generator point
     unsigned long long h_Gx_d[4] = {
-        0x79BE667EF9DCBBAC, 0x55A06295CE870B07, 0x029BFCD89C5E9A7D, 0xF4A7C7D5B8F7A8B6
+        0x59f2815bULL, 0x0ea3fe7fULL, 0x2e6ff0b0ULL, 0x79e81dc6ULL
     };
     unsigned long long h_Gy_d[4] = {
-        0x483ADA7726A3C465, 0x5DA4FBFC0E1108A8, 0xFD17B448A6855419, 0x9C47D08FFB10D4B8
+        0x4fe342e2ULL, 0xe0fa9e5bULL, 0x7c0cad3cULL, 0x9f07d8fbULL
     };
     CUDA_CHECK(cudaMemcpyToSymbol(Gx_d, h_Gx_d, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemcpyToSymbol(Gy_d, h_Gy_d, 4 * sizeof(unsigned long long)));
-
-    // Initialize c_beta with secp256k1 beta (for endomorphism)
-    unsigned long long h_beta[4] = {
-        0x6b3c4f7e6e6d8a9bULL, 0x8de6997d6330b136ULL, 0x7cf27b188d034f7eULL, 0x0000000000000000ULL
-    }; // secp256k1 beta (verify this value)
-    CUDA_CHECK(cudaMemcpyToSymbol(c_beta, h_beta, 4 * sizeof(unsigned long long)));
 
     // GPU setup
     cudaDeviceProp prop;
@@ -399,7 +393,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Batch size: " << batch_size << std::endl;
 
-    // Precompute tables (2^24 points)
+    // Precompute tables (2^16 points)
     JacobianPoint h_base, h_phi_base;
     fieldCopy(Gx_d, h_base.x);
     fieldCopy(Gy_d, h_base.y);
@@ -411,6 +405,9 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMalloc(&d_beta, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_Gx_d, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_phi_base_x, 4 * sizeof(unsigned long long)));
+    unsigned long long h_beta[4] = {
+        0x6b3c4f7eULL, 0x8de6997dULL, 0x7cf27b18ULL, 0x00000000ULL
+    };
     CUDA_CHECK(cudaMemcpy(d_beta, h_beta, 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_Gx_d, h_Gx_d, 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
     compute_phi_base_kernel<<<1, 1>>>(d_beta, d_Gx_d, d_phi_base_x);

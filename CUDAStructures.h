@@ -20,8 +20,8 @@ __device__ __constant__ uint32_t c_target_prefix;
 __device__ __constant__ unsigned long long Gx_d[4] = {0x59f2815bULL, 0x0ea3fe7fULL, 0x2e6ff0b0ULL, 0x79e81dc6ULL};
 __device__ __constant__ unsigned long long Gy_d[4] = {0x4fe342e2ULL, 0xe0fa9e5bULL, 0x7c0cad3cULL, 0x9f07d8fbULL};
 
-// Precomputed tables (2^24 = 16,777,216 points, ~1GB per table)
-#define PRECOMPUTE_WINDOW 24
+// Precomputed tables (2^16 = 65,536 points, ~256 MB total)
+#define PRECOMPUTE_WINDOW 16
 #define PRECOMPUTE_SIZE (1LL << PRECOMPUTE_WINDOW)
 __device__ unsigned long long* d_pre_Gx;    // Dynamically allocated on device
 __device__ unsigned long long* d_pre_Gy;
@@ -36,7 +36,7 @@ __device__ __constant__ unsigned long long c_Gy[(MAX_BATCH_SIZE/2) * 4];
 __device__ __constant__ unsigned long long c_p[4] = {0xfffffc2fULL, 0xffffffffULL, 0xffffffffULL, 0xffffffffULL};
 __device__ __constant__ unsigned long long c_n[4] = {0xd0364141ULL, 0xbaaedce6ULL, 0xfffffffeULL, 0xffffffffULL};
 __device__ __constant__ unsigned long long c_lambda[4] = {0x1b23bd72ULL, 0x20816678ULL, 0x8812645aULL, 0x0c05c30eULL};
-__device__ __constant__ unsigned long long c_beta[4] = {0xc2a38c8fULL, 0x488e4478ULL, 0xcdb4986eULL, 0x7c07107aULL};
+__device__ __constant__ unsigned long long c_beta[4] = {0x6b3c4f7eULL, 0x8de6997dULL, 0x7cf27b18ULL, 0x00000000ULL};
 
 // Barrett reduction constant mu = floor(2^512 / p)
 __device__ __constant__ unsigned long long c_mu[5] = {0x1000003d1ULL, 0ULL, 0ULL, 0ULL, 1ULL};
