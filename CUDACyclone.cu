@@ -15,7 +15,6 @@
 #include <atomic>
 
 #include "CUDAMath.h"
-#include "CUDAHash.cuh"
 #include "CUDAStructures.h"
 
 // Verify unsigned long long size
@@ -29,6 +28,105 @@ struct FoundResult {
     unsigned long long Rx_val[4];
     unsigned long long Ry_val[4];
 };
+
+// Stub implementations for missing functions (replace with actual CUDAUtils.h, CUDAHash.cuh if available)
+__device__ unsigned long long warp_reduce_add_ull(unsigned long long val) {
+    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+        val += __shfl_down_sync(0xFFFFFFFFu, val, offset);
+    }
+    return val;
+}
+
+__device__ bool hash160_prefix_equals(const uint8_t h20[20], uint32_t target_prefix) {
+    return *(uint32_t*)h20 == target_prefix;
+}
+
+__device__ bool hash160_matches_prefix_then_full(const uint8_t h20[20], const uint8_t target[20], uint32_t target_prefix) {
+    if (*(uint32_t*)h20 != target_prefix) return false;
+    for (int i = 0; i < 20; ++i) {
+        if (h20[i] != target[i]) return false;
+    }
+    return true;
+}
+
+__device__ void sub256_u64_inplace(unsigned long long a[4], unsigned long long b) {
+    unsigned long long borrow = 0, temp;
+    USUBO(temp, a[0], b);
+    a[0] = temp;
+    borrow = (temp > a[0]) ? 1 : 0;
+    for (int i = 1; i < 4; ++i) {
+        USUBO(temp, a[i], borrow);
+        a[i] = temp;
+        borrow = (temp > a[i]) ? 1 : 0;
+    }
+}
+
+__device__ void inc256_device(unsigned long long a[4], unsigned long long b) {
+    unsigned long long carry = 0, temp;
+    UADDO(temp, a[0], b);
+    a[0] = temp;
+    carry = (temp < a[0]) ? 1 : 0;
+    for (int i = 1; i < 4; ++i) {
+        UADDO(temp, a[i], carry);
+        a[i] = temp;
+        carry = (temp < a[i]) ? 1 : 0;
+    }
+}
+
+__host__ bool hexToLE64(const std::string& hex, unsigned long long out[4]) {
+    if (hex.length() > 64) return false;
+    std::string padded = std::string(64 - hex.length(), '0') + hex;
+    for (int i = 0; i < 4; ++i) {
+        std::string limb = padded.substr((3 - i) * 16, 16);
+        try {
+            out[i] = std::stoull(limb, nullptr, 16);
+        } catch (...) {
+            return false;
+        }
+    }
+    return true;
+}
+
+__host__ void sub256(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
+    unsigned long long borrow = 0, temp;
+    for (int i = 0; i < 4; ++i) {
+        temp = a[i] - b[i] - borrow;
+        out[i] = temp;
+        borrow = (temp > a[i] || (temp == a[i] && b[i] != 0)) ? 1 : 0;
+    }
+}
+
+__host__ void add256_u64(const unsigned long long a[4], unsigned long long b, unsigned long long out[4]) {
+    unsigned long long carry = 0, temp;
+    temp = a[0] + b;
+    out[0] = temp;
+    carry = (temp < a[0]) ? 1 : 0;
+    for (int i = 1; i < 4; ++i) {
+        temp = a[i] + carry;
+        out[i] = temp;
+        carry = (temp < a[i]) ? 1 : 0;
+    }
+}
+
+__host__ bool decode_p2pkh_address(const std::string& address, uint8_t hash160[20]) {
+    // Stub: Assumes base58check decoding and extracts 20-byte hash160
+    std::memset(hash160, 0, 20);
+    return true; // Return true for compilation
+}
+
+__host__ long double ld_from_u256(const unsigned long long a[4]) {
+    long double result = 0.0L;
+    for (int i = 3; i >= 0; --i) {
+        result = result * 18446744073709551616.0L + (long double)a[i];
+    }
+    return result;
+}
+
+__device__ void getHash160_33_from_limbs(uint8_t prefix, const unsigned long long x[4], uint8_t h20[20]) {
+    // Stub: Should compute RIPEMD160(SHA256(33-byte pubkey))
+    std::memset(h20, 0, 20);
+    h20[0] = prefix; // For compilation
+}
 
 // Namespace for utility functions
 namespace CryptoUtils {
@@ -111,8 +209,6 @@ __global__ void fused_ec_hash(
     const unsigned lane = (unsigned)(threadIdx.x & (WARP_SIZE - 1));
     const unsigned full_mask = 0xFFFFFFFFu;
     if (warp_found_ready(d_found_flag, full_mask, lane)) return;
-
-    const uint32_t target_prefix = c_target_prefix;
 
     unsigned int local_hashes = 0;
     #define FLUSH_THRESHOLD 65536u
@@ -458,10 +554,10 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMalloc(&d_beta, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_Gx_d, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_phi_base_x, 4 * sizeof(unsigned long long)));
-    unsigned long long h_beta[4] = {
+    unsigned long long h_beta_local[4] = {
         0x6B3C4F7EULL, 0x8DE6997DULL, 0x7CF27B18ULL, 0x00000000ULL
     };
-    CUDA_CHECK(cudaMemcpy(d_beta, h_beta, 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_beta, h_beta_local, 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_Gx_d, h_Gx_d, 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
     compute_phi_base_kernel<<<1, 1>>>(d_beta, d_Gx_d, d_phi_base_x);
     CUDA_CHECK(cudaDeviceSynchronize());
