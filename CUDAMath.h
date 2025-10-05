@@ -11,6 +11,9 @@
 #define BIFULLSIZE 40
 #define WARP_SIZE 32
 
+// Verify unsigned long long size
+static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bits");
+
 // PTX Assembly Macros (used only in device code)
 #ifdef __CUDA_ARCH__
 #define UADDO(c, a, b) asm volatile ("add.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
@@ -179,7 +182,7 @@ __host__ __device__ void fieldSub_opt(const unsigned long long a[4], const unsig
     for (int i = 0; i < 4; ++i) {
 #ifdef __CUDA_ARCH__
         USUBO(temp, a[i], b[i]);
-        USUBC(temp, borrow);
+        USUB1(temp, borrow);
 #else
         __uint128_t diff = (__uint128_t)a[i] - b[i] - borrow;
         temp = (unsigned long long)diff;
