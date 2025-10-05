@@ -167,10 +167,10 @@ __global__ void fused_ec_hash(
         if (lane < B && !P_local.infinity) {
             unsigned long long zinv[4], zinv2[4];
             fieldCopy(z_values + lane * 4, zinv);
-            fieldSqr_opt(zinv, zinv2);
-            fieldMul_opt(P_local.x, zinv2, x_affine);
-            fieldMul_opt(zinv, zinv2, zinv2);
-            fieldMul_opt(P_local.y, zinv2, y_affine);
+            fieldSqr_opt_device(zinv, zinv2);
+            fieldMul_opt_device(P_local.x, zinv2, x_affine);
+            fieldMul_opt_device(zinv, zinv2, zinv2);
+            fieldMul_opt_device(P_local.y, zinv2, y_affine);
         } else {
             fieldSetZero(x_affine);
             fieldSetZero(y_affine);
@@ -239,7 +239,7 @@ __global__ void precompute_batch_points_kernel(unsigned long long* d_Gx, unsigne
 }
 
 __global__ void compute_phi_base_kernel(const unsigned long long* beta, const unsigned long long* Gx_d, unsigned long long* phi_base_x) {
-    fieldMul_opt(beta, Gx_d, phi_base_x);
+    fieldMul_opt_device(beta, Gx_d, phi_base_x);
 }
 
 std::string human_bytes(size_t bytes) {

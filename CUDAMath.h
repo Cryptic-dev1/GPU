@@ -185,7 +185,7 @@ __host__ void mul256_host(const unsigned long long a[4], const unsigned long lon
     static_assert(sizeof(a[0]) == 8, "Input array elements must be 64 bits");
     static_assert(sizeof(b[0]) == 8, "Input array elements must be 64 bits");
     static_assert(sizeof(out[0]) == 8, "Output array elements must be 64 bits");
-    fieldSetZero(out);
+    unsigned long long temp_out[8] = {0};
     unsigned long long lo, hi, carry;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
@@ -199,22 +199,24 @@ __host__ void mul256_host(const unsigned long long a[4], const unsigned long lon
             hi = (unsigned long long)(prod >> 64);
             unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1ULL : 0ULL;
-            unsigned long long out_ij = out[i + j];
-            out[i + j] = out_ij + sum;
-            carry += (out[i + j] < out_ij) ? 1ULL : 0ULL;
-            unsigned long long out_ij1 = out[i + j + 1];
-            out[i + j + 1] = out_ij1 + hi + carry;
-            carry = (out[i + j + 1] < hi) ? 1ULL : 0ULL;
+            unsigned long long out_ij = *(temp_out + i + j);
+            *(temp_out + i + j) = out_ij + sum;
+            carry += (*(temp_out + i + j) < out_ij) ? 1ULL : 0ULL;
+            unsigned long long out_ij1 = *(temp_out + i + j + 1);
+            *(temp_out + i + j + 1) = out_ij1 + hi + carry;
+            carry = (*(temp_out + i + j + 1) < hi) ? 1ULL : 0ULL;
         }
-        if (i + 4 < 8) out[i + 4] = carry;
+        if (i + 4 < 8) *(temp_out + i + 4) = carry;
     }
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) out[i] = temp_out[i];
 }
 
 __host__ void mul_high_host(const unsigned long long a[4], const unsigned long long b[5], unsigned long long high[5]) {
     static_assert(sizeof(a[0]) == 8, "Input array elements must be 64 bits");
     static_assert(sizeof(b[0]) == 8, "Input array elements must be 64 bits");
     static_assert(sizeof(high[0]) == 8, "Output array elements must be 64 bits");
-    unsigned long long prod[9] = {0};
+    unsigned long long temp_prod[9] = {0};
     unsigned long long lo, hi, carry;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
@@ -228,17 +230,17 @@ __host__ void mul_high_host(const unsigned long long a[4], const unsigned long l
             hi = (unsigned long long)(prod >> 64);
             unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1ULL : 0ULL;
-            unsigned long long prod_ij = prod[i + j];
-            prod[i + j] = prod_ij + sum;
-            carry += (prod[i + j] < prod_ij) ? 1ULL : 0ULL;
-            unsigned long long prod_ij1 = prod[i + j + 1];
-            prod[i + j + 1] = prod_ij1 + hi + carry;
-            carry = (prod[i + j + 1] < hi) ? 1ULL : 0ULL;
+            unsigned long long prod_ij = *(temp_prod + i + j);
+            *(temp_prod + i + j) = prod_ij + sum;
+            carry += (*(temp_prod + i + j) < prod_ij) ? 1ULL : 0ULL;
+            unsigned long long prod_ij1 = *(temp_prod + i + j + 1);
+            *(temp_prod + i + j + 1) = prod_ij1 + hi + carry;
+            carry = (*(temp_prod + i + j + 1) < hi) ? 1ULL : 0ULL;
         }
-        if (i + 5 < 9) prod[i + 5] = carry;
+        if (i + 5 < 9) *(temp_prod + i + 5) = carry;
     }
     #pragma unroll
-    for (int i = 0; i < 5; ++i) high[i] = prod[i + 4];
+    for (int i = 0; i < 5; ++i) *(high + i) = *(temp_prod + i + 4);
 }
 
 __host__ void modred_barrett_opt_host(const unsigned long long input[8], unsigned long long out[4]) {
@@ -320,7 +322,7 @@ __device__ void mul256_device(const unsigned long long a[4], const unsigned long
     static_assert(sizeof(a[0]) == 8, "Input array elements must be 64 bits");
     static_assert(sizeof(b[0]) == 8, "Input array elements must be 64 bits");
     static_assert(sizeof(out[0]) == 8, "Output array elements must be 64 bits");
-    fieldSetZero(out);
+    unsigned long long temp_out[8] = {0};
     unsigned long long lo, hi, carry;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
@@ -333,22 +335,24 @@ __device__ void mul256_device(const unsigned long long a[4], const unsigned long
             UMULHI(hi, ai, bj);
             unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1ULL : 0ULL;
-            unsigned long long out_ij = out[i + j];
-            out[i + j] = out_ij + sum;
-            carry += (out[i + j] < out_ij) ? 1ULL : 0ULL;
-            unsigned long long out_ij1 = out[i + j + 1];
-            out[i + j + 1] = out_ij1 + hi + carry;
-            carry = (out[i + j + 1] < hi) ? 1ULL : 0ULL;
+            unsigned long long out_ij = *(temp_out + i + j);
+            *(temp_out + i + j) = out_ij + sum;
+            carry += (*(temp_out + i + j) < out_ij) ? 1ULL : 0ULL;
+            unsigned long long out_ij1 = *(temp_out + i + j + 1);
+            *(temp_out + i + j + 1) = out_ij1 + hi + carry;
+            carry = (*(temp_out + i + j + 1) < hi) ? 1ULL : 0ULL;
         }
-        if (i + 4 < 8) out[i + 4] = carry;
+        if (i + 4 < 8) *(temp_out + i + 4) = carry;
     }
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) out[i] = temp_out[i];
 }
 
 __device__ void mul_high_device(const unsigned long long a[4], const unsigned long long b[5], unsigned long long high[5]) {
-    static_assert(sizeof(a[0]) == 8, "Input array elements must be 64 bits");
+    static_assert(sizeof(a[0]) == 8, "Input array elements must be 44 bits");
     static_assert(sizeof(b[0]) == 8, "Input array elements must be 64 bits");
     static_assert(sizeof(high[0]) == 8, "Output array elements must be 64 bits");
-    unsigned long long prod[9] = {0};
+    unsigned long long temp_prod[9] = {0};
     unsigned long long lo, hi, carry;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
@@ -361,17 +365,17 @@ __device__ void mul_high_device(const unsigned long long a[4], const unsigned lo
             UMULHI(hi, ai, bj);
             unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1ULL : 0ULL;
-            unsigned long long prod_ij = prod[i + j];
-            prod[i + j] = prod_ij + sum;
-            carry += (prod[i + j] < prod_ij) ? 1ULL : 0ULL;
-            unsigned long long prod_ij1 = prod[i + j + 1];
-            prod[i + j + 1] = prod_ij1 + hi + carry;
-            carry = (prod[i + j + 1] < hi) ? 1ULL : 0ULL;
+            unsigned long long prod_ij = *(temp_prod + i + j);
+            *(temp_prod + i + j) = prod_ij + sum;
+            carry += (*(temp_prod + i + j) < prod_ij) ? 1ULL : 0ULL;
+            unsigned long long prod_ij1 = *(temp_prod + i + j + 1);
+            *(temp_prod + i + j + 1) = prod_ij1 + hi + carry;
+            carry = (*(temp_prod + i + j + 1) < hi) ? 1ULL : 0ULL;
         }
-        if (i + 5 < 9) prod[i + 5] = carry;
+        if (i + 5 < 9) *(temp_prod + i + 5) = carry;
     }
     #pragma unroll
-    for (int i = 0; i < 5; ++i) high[i] = prod[i + 4];
+    for (int i = 0; i < 5; ++i) *(high + i) = *(temp_prod + i + 4);
 }
 
 __device__ void modred_barrett_opt_device(const unsigned long long input[8], unsigned long long out[4]) {
