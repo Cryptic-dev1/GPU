@@ -1,3 +1,4 @@
+#include "CUDAMath.h"
 #include "CUDAHash.cuh"
 #include <cstdint>
 #include <cuda_runtime.h>
