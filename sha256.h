@@ -80,7 +80,7 @@ namespace host_sha256 {
     }
 } 
 
-static bool base58_decode(const std::string& in, std::vector<uint8_t>& out)
+bool base58_decode(const std::string& in, std::vector<uint8_t>& out)
 {
     static const char* ALPH = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
     static int8_t map[128];
@@ -115,7 +115,7 @@ static bool base58_decode(const std::string& in, std::vector<uint8_t>& out)
     return true;
 }
 
-static bool decode_p2pkh_address(const std::string& addr, uint8_t out_hash160[20])
+bool decode_p2pkh_address(const std::string& addr, uint8_t out_hash160[20])
 {
     if (addr.empty() || addr[0] != '1') return false;
 
@@ -126,7 +126,7 @@ static bool decode_p2pkh_address(const std::string& addr, uint8_t out_hash160[20
 
     uint8_t check[32];
     host_sha256::sha256d(raw.data(), 21, check);
-    if ( !std::equal(check, check+4, raw.data()+21) ) return false;
+    if (!std::equal(check, check+4, raw.data()+21)) return false;
 
     std::memcpy(out_hash160, raw.data()+1, 20);
     return true;
