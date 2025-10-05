@@ -303,7 +303,7 @@ int main(int argc, char* argv[]) {
     // Argument parsing
     unsigned long long range_start[4] = {0}, range_end[4] = {0}, range_len[4];
     uint8_t target_hash160[20] = {0};
-    int blocks = 512, threadsPerBlock = 256, batch_size = 64;
+    int blocks = 512, threadsPerBlock = 256, batch_size = 16;
     uint32_t max_batches_per_launch = 64;
     std::string range_str, address_str, grid_str;
     bool verbose = false;
@@ -380,6 +380,12 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpyToSymbol(Gx_d, h_Gx_d, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemcpyToSymbol(Gy_d, h_Gy_d, 4 * sizeof(unsigned long long)));
 
+    // Initialize c_beta with secp256k1 beta
+    unsigned long long h_beta[4] = {
+        0x7CF27B188D034F7E, 0x8DE6997D6330B136, 0x6B3C4F7E6E6D8A9B, 0xA7D2E7B9C4F8C7A6
+    }; // Example beta value (replace with correct secp256k1 beta if needed)
+    CUDA_CHECK(cudaMemcpyToSymbol(c_beta, h_beta, 4 * sizeof(unsigned long long)));
+
     // GPU setup
     cudaDeviceProp prop;
     CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
@@ -402,9 +408,9 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMalloc(&d_beta, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_Gx_d, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_phi_base_x, 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemcpyToSymbol(c_beta, c_beta, 4 * sizeof(unsigned long long))); // Copy c_beta to device constant
+    CUDA_CHECK(cudaMemcpy(d_beta, h_beta, 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_Gx_d, h_Gx_d, 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
-    compute_phi_base_kernel<<<1, 1>>>(c_beta, d_Gx_d, d_phi_base_x);
+    compute_phi_base_kernel<<<1, 1>>>(d_beta, d_Gx_d, d_phi_base_x);
     CUDA_CHECK(cudaDeviceSynchronize());
     CUDA_CHECK(cudaMemcpy(h_phi_base.x, d_phi_base_x, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaFree(d_beta));
@@ -427,8 +433,11 @@ int main(int argc, char* argv[]) {
 
     // Debug c_Gx and c_Gy initialization
     unsigned long long h_c_Gx[batch_size / 2 * 4];
+    unsigned long long h_c_Gy[batch_size / 2 * 4];
     CUDA_CHECK(cudaMemcpyFromSymbol(h_c_Gx, c_Gx, (batch_size / 2) * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_c_Gy, c_Gy, (batch_size / 2) * 4 * sizeof(unsigned long long)));
     std::cout << "c_Gx[0]: " << std::hex << h_c_Gx[0] << std::endl;
+    std::cout << "c_Gy[0]: " << std::hex << h_c_Gy[0] << std::endl;
 
     CUDA_CHECK(cudaMemcpyToSymbol(c_Gx, d_Gx, (batch_size / 2) * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemcpyToSymbol(c_Gy, d_Gy, (batch_size / 2) * 4 * sizeof(unsigned long long)));
