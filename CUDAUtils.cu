@@ -2,6 +2,10 @@
 #include <cstdint>
 #include <string>
 #include <sstream>
+#include <iomanip>
+#include <cassert>
+#include <vector>
+#include <stdexcept>
 
 __host__ void add256_u64(const uint64_t a[4], uint64_t b, uint64_t out[4]) {
     __uint128_t sum = (__uint128_t)a[0] + b;
@@ -79,15 +83,6 @@ bool hexToHash160(const std::string& h, uint8_t hash160[20]) {
     return true;
 }
 
-std::string formatHex256(const uint64_t limbs[4]) {
-    std::ostringstream oss;
-    oss << std::hex << std::uppercase << std::setfill('0');
-    for (int i = 3; i >= 0; --i) {
-        oss << std::setw(16) << limbs[i];
-    }
-    return oss.str();
-}
-
 __device__ void inc256_device(uint64_t a[4], uint64_t inc) {
     unsigned __int128 cur = (unsigned __int128)a[0] + inc;
     a[0] = (uint64_t)cur;
@@ -163,24 +158,8 @@ long double ld_from_u256(const uint64_t v[4]) {
            std::ldexp((long double)v[1], 64) + (long double)v[0];
 }
 
-std::string formatCompressedPubHex(const uint64_t Rx[4], const uint64_t Ry[4]) {
-    uint8_t out[33];
-    out[0] = (Ry[0] & 1ULL) ? 0x03 : 0x02;
-    int off = 1;
-    for (int limb = 3; limb >= 0; --limb) {
-        uint64_t v = Rx[limb];
-        out[off+0] = (uint8_t)(v >> 56); out[off+1] = (uint8_t)(v >> 48);
-        out[off+2] = (uint8_t)(v >> 40); out[off+3] = (uint8_t)(v >> 32);
-        out[off+4] = (uint8_t)(v >> 24); out[off+5] = (uint8_t)(v >> 16);
-        out[off+6] = (uint8_t)(v >> 8);  out[off+7] = (uint8_t)(v >> 0);
-        off += 8;
-    }
-    static const char* hexd = "0123456789ABCDEF";
-    std::string s;
-    s.resize(66);
-    for (int i = 0; i < 33; ++i) {
-        s[2*i] = hexd[(out[i] >> 4) & 0xF];
-        s[2*i+1] = hexd[out[i] & 0xF];
-    }
-    return s;
+bool decode_p2pkh_address(const std::string& addr, uint8_t hash160[20]) {
+    // Placeholder for address decoding (requires base58 and SHA256)
+    // Implement actual decoding logic here or use an external library
+    return hexToHash160(addr, hash160); // Simplified for now
 }

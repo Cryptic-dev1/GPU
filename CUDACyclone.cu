@@ -20,7 +20,7 @@
 #include "CUDAUtils.h"
 #include "CUDAStructures.h"
 
-// Inline implementations to avoid dependency issues
+// Inline function definitions to avoid dependency issues
 std::string formatHex256(const uint64_t limbs[4]) {
     std::ostringstream oss;
     oss << std::hex << std::uppercase << std::setfill('0');
