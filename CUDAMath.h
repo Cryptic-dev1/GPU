@@ -349,7 +349,7 @@ __device__ void mul256_device(const unsigned long long a[4], const unsigned long
 }
 
 __device__ void mul_high_device(const unsigned long long a[4], const unsigned long long b[5], unsigned long long high[5]) {
-    static_assert(sizeof(a[0]) == 8, "Input array elements must be 44 bits");
+    static_assert(sizeof(a[0]) == 8, "Input array elements must be 64 bits");
     static_assert(sizeof(b[0]) == 8, "Input array elements must be 64 bits");
     static_assert(sizeof(high[0]) == 8, "Output array elements must be 64 bits");
     unsigned long long temp_prod[9] = {0};
@@ -431,8 +431,8 @@ __host__ __device__ void fieldNeg(const unsigned long long a[4], unsigned long l
 }
 
 __device__ void batch_modinv_fermat(const unsigned long long* a, unsigned long long* inv, int n) {
-    extern __shared__ unsigned long long shared[];
-    unsigned long long *prefix = shared;
+    extern __shared__ unsigned long long shared_mem[];
+    unsigned long long *prefix = shared_mem;
     unsigned long long prod[4], tmp[4];
     int tid = threadIdx.x % WARP_SIZE;
     if (tid == 0) {

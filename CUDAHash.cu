@@ -42,8 +42,8 @@ __device__ __forceinline__ void SHA256Initialize(uint32_t s[8]) {
 }
 
 __device__ void SHA256Transform(uint32_t state[8], const uint32_t W[16]) {
-    extern __shared__ uint32_t shared[];
-    uint32_t *s_state = shared;
+    extern __shared__ uint32_t sha_shared_mem[];
+    uint32_t *s_state = sha_shared_mem;
     uint32_t *my_state = s_state + (threadIdx.x % WARP_SIZE) * 8;
     #pragma unroll
     for (int i = 0; i < 8; ++i) my_state[i] = state[i];
@@ -146,8 +146,8 @@ __device__ void RIPEMD160Initialize(uint32_t s[5]) {
 }
 
 __device__ void RIPEMD160Transform(uint32_t state[5], const uint32_t W[16]) {
-    extern __shared__ uint32_t shared[];
-    uint32_t *s_ripe_state = shared + (WARP_SIZE * 8);
+    extern __shared__ uint32_t ripe_shared_mem[];
+    uint32_t *s_ripe_state = ripe_shared_mem;
     uint32_t *my_state = s_ripe_state + (threadIdx.x % WARP_SIZE) * 5;
     #pragma unroll
     for (int i = 0; i < 5; ++i) my_state[i] = state[i];
@@ -232,13 +232,12 @@ __device__ void addBigEndian32(uint8_t* data32, uint64_t offset) {
 }
 
 __device__ void batch_getHash160_33bytes(const uint8_t* pubkeys, uint8_t* hashes, int n) {
-    extern __shared__ uint32_t shared[];
-    uint32_t *s_state = shared;
-    uint32_t *my_state = s_state + (threadIdx.x % WARP_SIZE) * 8;
-    uint32_t state[8], W[16];
+    extern __shared__ uint32_t batch_shared_mem[];
+    uint32_t *s_state = batch_shared_mem;
     for (int idx = threadIdx.x; idx < n; idx += blockDim.x) {
         const uint8_t* pubkey = pubkeys + idx * 33;
         uint8_t* hash = hashes + idx * 20;
+        uint32_t W[16], state[8];
         #pragma unroll
         for (int i = 0; i < 8; ++i) {
             W[i] = pack_be4(pubkey[4*i], pubkey[4*i+1], pubkey[4*i+2], pubkey[4*i+3]);
