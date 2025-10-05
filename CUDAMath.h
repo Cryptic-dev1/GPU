@@ -11,7 +11,8 @@
 #define BIFULLSIZE 40
 #define WARP_SIZE 32
 
-// PTX Assembly Macros
+// PTX Assembly Macros (used only in device code)
+#ifdef __CUDA_ARCH__
 #define UADDO(c, a, b) asm volatile ("add.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADDC(c, a, b) asm volatile ("addc.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADD(c, a, b) asm volatile ("addc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b))
@@ -30,6 +31,7 @@
 #define MADDC(r, a, b, c) asm volatile ("madc.hi.cc.u64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c) : "memory")
 #define MADD(r, a, b, c) asm volatile ("madc.hi.u64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c))
 #define MADDS(r, a, b, c) asm volatile ("madc.hi.s64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c))
+#endif
 
 __device__ __constant__ unsigned long long MM64 = 0xD838091DD2253531ULL;
 __device__ __constant__ unsigned long long MSK62 = 0x3FFFFFFFFFFFFFFFULL;
@@ -53,13 +55,6 @@ __host__ __device__ __forceinline__ bool isZero256(const unsigned long long a[4]
 
 #define __sright128(a, b, n) ((a) >> (n)) | ((b) << (64 - (n)))
 #define __sleft128(a, b, n) ((b) << (n)) | ((a) >> (64 - (n)))
-
-#define AddP(r) { \
-    UADDO1(r[0], c_p[0]); \
-    UADDC1(r[1], c_p[1]); \
-    UADDC1(r[2], c_p[2]); \
-    UADD1(r[3], c_p[3]); \
-}
 
 // Field Utility Functions
 __host__ __device__ void fieldSetZero(unsigned long long a[4]) {
@@ -148,8 +143,14 @@ __host__ __device__ void fieldAdd_opt(const unsigned long long a[4], const unsig
     unsigned long long carry = 0, temp;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
+#ifdef __CUDA_ARCH__
         UADDO(temp, a[i], b[i]);
         UADD1(temp, carry);
+#else
+        __uint128_t sum = (__uint128_t)a[i] + b[i] + carry;
+        temp = (unsigned long long)sum;
+        carry = (unsigned long long)(sum >> 64);
+#endif
         out[i] = temp;
         carry = (temp < a[i] || (temp == a[i] && b[i] != 0)) ? 1 : 0;
     }
@@ -162,10 +163,12 @@ __host__ __device__ void fieldAdd_opt(const unsigned long long a[4], const unsig
     }
 #else
     if (carry || ge256(out, host_c_p)) {
-        USUBO(out[0], out[0], host_c_p[0]);
-        USUBC(out[1], out[1], host_c_p[1]);
-        USUBC(out[2], out[2], host_c_p[2]);
-        USUB(out[3], out[3], host_c_p[3]);
+        unsigned long long borrow = 0;
+        for (int i = 0; i < 4; ++i) {
+            __uint128_t diff = (__uint128_t)out[i] - host_c_p[i] - borrow;
+            out[i] = (unsigned long long)diff;
+            borrow = (diff >> 64) ? 1 : 0;
+        }
     }
 #endif
 }
@@ -174,8 +177,14 @@ __host__ __device__ void fieldSub_opt(const unsigned long long a[4], const unsig
     unsigned long long borrow = 0, temp;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
+#ifdef __CUDA_ARCH__
         USUBO(temp, a[i], b[i]);
         USUB1(temp, borrow);
+#else
+        __uint128_t diff = (__uint128_t)a[i] - b[i] - borrow;
+        temp = (unsigned long long)diff;
+        borrow = (diff >> 64) ? 1 : 0;
+#endif
         out[i] = temp;
         borrow = (temp > a[i] || (temp == a[i] && b[i] != 0)) ? 1 : 0;
     }
@@ -188,10 +197,12 @@ __host__ __device__ void fieldSub_opt(const unsigned long long a[4], const unsig
     }
 #else
     if (borrow) {
-        UADDO(out[0], out[0], host_c_p[0]);
-        UADDC(out[1], out[1], host_c_p[1]);
-        UADDC(out[2], out[2], host_c_p[2]);
-        UADD(out[3], out[3], host_c_p[3]);
+        unsigned long long carry = 0;
+        for (int i = 0; i < 4; ++i) {
+            __uint128_t sum = (__uint128_t)out[i] + host_c_p[i] + carry;
+            out[i] = (unsigned long long)sum;
+            carry = (unsigned long long)(sum >> 64);
+        }
     }
 #endif
 }
@@ -206,8 +217,14 @@ __host__ __device__ void mul256(const unsigned long long a[4], const unsigned lo
         for (int j = 0; j < 4; ++j) {
             unsigned long long ai = a[i];
             unsigned long long bj = b[j];
+#ifdef __CUDA_ARCH__
             UMULLO(lo, ai, bj);
             UMULHI(hi, ai, bj);
+#else
+            __uint128_t prod = (__uint128_t)ai * bj;
+            lo = (unsigned long long)prod;
+            hi = (unsigned long long)(prod >> 64);
+#endif
             unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1 : 0;
             unsigned long long out_ij = out[i+j];
@@ -231,8 +248,14 @@ __host__ __device__ void mul_high(const unsigned long long a[4], const unsigned 
         for (int j = 0; j < 5; ++j) {
             unsigned long long ai = a[i];
             unsigned long long bj = b[j];
+#ifdef __CUDA_ARCH__
             UMULLO(lo, ai, bj);
             UMULHI(hi, ai, bj);
+#else
+            __uint128_t prod = (__uint128_t)ai * bj;
+            lo = (unsigned long long)prod;
+            hi = (unsigned long long)(prod >> 64);
+#endif
             unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1 : 0;
             unsigned long long prod_ij = prod[i+j];
