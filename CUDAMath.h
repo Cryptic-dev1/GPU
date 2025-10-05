@@ -35,7 +35,7 @@ __device__ __constant__ unsigned long long MM64 = 0xD838091DD2253531ULL;
 __device__ __constant__ unsigned long long MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 
 // Utility function for zero check
-__device__ __host__ __forceinline__ bool isZero256(const unsigned long long a[4]) {
+__host__ __device__ __forceinline__ bool isZero256(const unsigned long long a[4]) {
     return (a[3] | a[2] | a[1] | a[0]) == 0ULL;
 }
 
@@ -59,18 +59,18 @@ __device__ __host__ __forceinline__ bool isZero256(const unsigned long long a[4]
 }
 
 // Field Utility Functions
-__device__ void fieldSetZero(unsigned long long a[4]) {
+__host__ __device__ void fieldSetZero(unsigned long long a[4]) {
     #pragma unroll
     for (int i = 0; i < 4; ++i) a[i] = 0ULL;
 }
 
-__device__ void fieldSetOne(unsigned long long a[4]) {
+__host__ __device__ void fieldSetOne(unsigned long long a[4]) {
     a[0] = 1ULL;
     #pragma unroll
     for (int i = 1; i < 4; ++i) a[i] = 0ULL;
 }
 
-__device__ void fieldCopy(const unsigned long long a[4], unsigned long long b[4]) {
+__host__ __device__ void fieldCopy(const unsigned long long a[4], unsigned long long b[4]) {
     #pragma unroll
     for (int i = 0; i < 4; ++i) b[i] = a[i];
 }
@@ -141,7 +141,7 @@ __device__ void sub512(const unsigned long long a[8], const unsigned long long b
 }
 
 // Optimized Field Operations
-__device__ void fieldAdd_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
+__host__ __device__ void fieldAdd_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
     unsigned long long carry = 0, temp;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
@@ -158,7 +158,7 @@ __device__ void fieldAdd_opt(const unsigned long long a[4], const unsigned long 
     }
 }
 
-__device__ void fieldSub_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
+__host__ __device__ void fieldSub_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
     unsigned long long borrow = 0, temp;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
@@ -241,7 +241,7 @@ __device__ void modred_barrett_opt(const unsigned long long input[8], unsigned l
     fieldCopy(r, out);
 }
 
-__device__ void fieldMul_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
+__host__ __device__ void fieldMul_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
     unsigned long long prod[8];
     mul256(a, b, prod);
     modred_barrett_opt(prod, out);
@@ -359,7 +359,7 @@ __device__ void pointSetG(JacobianPoint &P) {
     P.infinity = false;
 }
 
-__device__ void pointToAffine(const JacobianPoint &P, unsigned long long outX[4], unsigned long long outY[4]) {
+__host__ __device__ void pointToAffine(const JacobianPoint &P, unsigned long long outX[4], unsigned long long outY[4]) {
     if (P.infinity || isZero256(P.z)) {
         fieldSetZero(outX);
         fieldSetZero(outY);
@@ -373,7 +373,7 @@ __device__ void pointToAffine(const JacobianPoint &P, unsigned long long outX[4]
     fieldMul_opt(P.y, zinv2, outY);
 }
 
-__device__ void pointDoubleJacobian(const JacobianPoint &P, JacobianPoint &R) {
+__host__ __device__ void pointDoubleJacobian(const JacobianPoint &P, JacobianPoint &R) {
     if (P.infinity || isZero256(P.z)) {
         pointSetInfinity(R);
         return;
@@ -548,6 +548,19 @@ __device__ void scalarMulBaseJacobian(const unsigned long long scalar_le[4], uns
     fieldMul_opt(R2.x, c_beta, R2.x);
     pointAddJacobian(R1, R2, R);
     pointToAffine(R, outX, outY);
+}
+
+__host__ __device__ bool ge256(const unsigned long long a[4], const unsigned long long b[4]) {
+    for (int i = 3; i >= 0; --i) {
+        if (a[i] > b[i]) return true;
+        if (a[i] < b[i]) return false;
+    }
+    return true;
+}
+
+__host__ __device__ bool ge256_u64(const unsigned long long a[4], unsigned long long b) {
+    if (a[3] != 0 || a[2] != 0 || a[1] != 0) return true;
+    return a[0] >= b;
 }
 
 __global__ void scalarMulKernelBase(const unsigned long long* scalars_in, unsigned long long* outX, unsigned long long* outY, int N, unsigned long long* d_pre_Gx, unsigned long long* d_pre_Gy, unsigned long long* d_pre_phiGx, unsigned long long* d_pre_phiGy) {
