@@ -93,22 +93,6 @@ bool hexToHash160(const std::string& h, uint8_t hash160[20]) {
     return true;
 }
 
-bool decode_p2pkh_address(const std::string& addr, uint8_t out_hash160[20]) {
-    if (addr.empty() || addr[0] != '1') return false;
-
-    std::vector<uint8_t> raw;
-    if (!base58_decode(addr, raw)) return false;
-    if (raw.size() != 25) return false;
-    if (raw[0] != 0x00) return false; // Mainnet P2PKH version byte
-
-    uint8_t check[32];
-    host_sha256::sha256d(raw.data(), 21, check);
-    if (!std::equal(check, check + 4, raw.data() + 21)) return false;
-
-    std::memcpy(out_hash160, raw.data() + 1, 20);
-    return true;
-}
-
 __device__ void inc256_device(unsigned long long a[4], unsigned long long inc) {
     unsigned __int128 cur = (unsigned __int128)a[0] + inc;
     a[0] = (unsigned long long)cur;
@@ -139,11 +123,6 @@ __device__ bool eq256_u64(const unsigned long long a[4], unsigned long long b) {
 
 __device__ bool hash160_prefix_equals(const uint8_t* h, uint32_t target_prefix) {
     return load_u32_le(h) == target_prefix;
-}
-
-__device__ bool ge256_u64(const unsigned long long a[4], unsigned long long b) {
-    if (a[3] != 0 || a[2] != 0 || a[1] != 0) return true;
-    return a[0] >= b;
 }
 
 __device__ void sub256_u64_inplace(unsigned long long a[4], unsigned long long dec) {
