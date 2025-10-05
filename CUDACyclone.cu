@@ -385,7 +385,7 @@ int main(int argc, char* argv[]) {
 
     // Initialize c_beta with secp256k1 beta (for endomorphism)
     unsigned long long h_beta[4] = {
-        0x7CF27B188D034F7E, 0x8DE6997D6330B136, 0x6B3C4F7E6E6D8A9B, 0xA7D2E7B9C4F8C7A6
+        0x6b3c4f7e6e6d8a9bULL, 0x8de6997d6330b136ULL, 0x7cf27b188d034f7eULL, 0x0000000000000000ULL
     }; // secp256k1 beta (verify this value)
     CUDA_CHECK(cudaMemcpyToSymbol(c_beta, h_beta, 4 * sizeof(unsigned long long)));
 
