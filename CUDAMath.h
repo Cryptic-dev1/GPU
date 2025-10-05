@@ -31,8 +31,6 @@
 #define MADD(r, a, b, c) asm volatile ("madc.hi.u64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c))
 #define MADDS(r, a, b, c) asm volatile ("madc.hi.s64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c))
 
-#define HSIZE (GRP_SIZE / 2 - 1)
-
 __device__ __constant__ uint64_t MM64 = 0xD838091DD2253531ULL;
 __device__ __constant__ uint64_t MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 
@@ -175,19 +173,21 @@ __device__ void fieldSub_opt(const uint64_t a[4], const uint64_t b[4], uint64_t 
 
 __device__ void mul256(const uint64_t a[4], const uint64_t b[4], uint64_t out[8]) {
     fieldSetZero(out);
-    uint64_t lo, hi, carry;
+    uint64_t lo, hi, carry, temp;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
         carry = 0;
         #pragma unroll
         for (int j = 0; j < 4; ++j) {
-            uint64_t ai = a[i], bj = b[j];
+            uint64_t ai = a[i], bj = b[j], out_ij = out[i+j], out_ij1 = out[i+j+1];
             UMULLO(lo, ai, bj);
             UMULHI(hi, ai, bj);
-            UADDO(lo, lo, carry);
+            UADDO(temp, lo, carry);
             UADD1(hi, 0);
-            UADDO(out[i+j], out[i+j], lo);
-            UADDC(out[i+j+1], out[i+j+1], hi);
+            UADDO(out_ij, out_ij, temp);
+            UADDC(out_ij1, out_ij1, hi);
+            out[i+j] = out_ij;
+            out[i+j+1] = out_ij1;
             carry = (out[i+j+1] < hi) ? 1 : 0;
         }
         if (i + 4 < 8) out[i+4] += carry;
@@ -196,19 +196,21 @@ __device__ void mul256(const uint64_t a[4], const uint64_t b[4], uint64_t out[8]
 
 __device__ void mul_high(const uint64_t a[4], const uint64_t b[5], uint64_t high[5]) {
     uint64_t prod[9] = {0};
-    uint64_t carry, lo, hi;
+    uint64_t lo, hi, carry, temp;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
         carry = 0;
         #pragma unroll
         for (int j = 0; j < 5; ++j) {
-            uint64_t ai = a[i], bj = b[j];
+            uint64_t ai = a[i], bj = b[j], prod_ij = prod[i+j], prod_ij1 = prod[i+j+1];
             UMULLO(lo, ai, bj);
             UMULHI(hi, ai, bj);
-            UADDO(lo, lo, carry);
+            UADDO(temp, lo, carry);
             UADD1(hi, 0);
-            UADDO(prod[i+j], prod[i+j], lo);
-            UADDC(prod[i+j+1], prod[i+j+1], hi);
+            UADDO(prod_ij, prod_ij, temp);
+            UADDC(prod_ij1, prod_ij1, hi);
+            prod[i+j] = prod_ij;
+            prod[i+j+1] = prod_ij1;
             carry = (prod[i+j+1] < hi) ? 1 : 0;
         }
         if (i + 5 < 9) prod[i+5] += carry;
