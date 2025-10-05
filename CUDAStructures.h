@@ -8,44 +8,44 @@
 #define MAX_BATCH_SIZE 1024
 
 struct JacobianPoint {
-    uint64_t x[4];
-    uint64_t y[4];
-    uint64_t z[4];
+    unsigned long long x[4];
+    unsigned long long y[4];
+    unsigned long long z[4];
     bool infinity;
 };
 
 // Constants (little-endian)
 __device__ __constant__ uint8_t  c_target_hash160[20];
 __device__ __constant__ uint32_t c_target_prefix;
-__device__ __constant__ uint64_t Gx_d[4] = {0x59f2815b, 0x0ea3fe7f, 0x2e6ff0b0, 0x79e81dc6};
-__device__ __constant__ uint64_t Gy_d[4] = {0x4fe342e2, 0xe0fa9e5b, 0x7c0cad3c, 0x9f07d8fb};
+__device__ __constant__ unsigned long long Gx_d[4] = {0x59f2815bULL, 0x0ea3fe7fULL, 0x2e6ff0b0ULL, 0x79e81dc6ULL};
+__device__ __constant__ unsigned long long Gy_d[4] = {0x4fe342e2ULL, 0xe0fa9e5bULL, 0x7c0cad3cULL, 0x9f07d8fbULL};
 
 // Precomputed tables (2^24 = 16,777,216 points, ~1GB per table)
 #define PRECOMPUTE_WINDOW 24
 #define PRECOMPUTE_SIZE (1LL << PRECOMPUTE_WINDOW)
-__device__ uint64_t* d_pre_Gx;    // Dynamically allocated on device
-__device__ uint64_t* d_pre_Gy;
-__device__ uint64_t* d_pre_phiGx;
-__device__ uint64_t* d_pre_phiGy;
+__device__ unsigned long long* d_pre_Gx;    // Dynamically allocated on device
+__device__ unsigned long long* d_pre_Gy;
+__device__ unsigned long long* d_pre_phiGx;
+__device__ unsigned long long* d_pre_phiGy;
 
 // Batch point tables for fused_ec_hash
-__device__ __constant__ uint64_t c_Gx[(MAX_BATCH_SIZE/2) * 4];
-__device__ __constant__ uint64_t c_Gy[(MAX_BATCH_SIZE/2) * 4];
+__device__ __constant__ unsigned long long c_Gx[(MAX_BATCH_SIZE/2) * 4];
+__device__ __constant__ unsigned long long c_Gy[(MAX_BATCH_SIZE/2) * 4];
 
 // secp256k1 constants (little-endian)
-__device__ __constant__ uint64_t c_p[4] = {0xfffffc2f, 0xffffffff, 0xffffffff, 0xffffffff};
-__device__ __constant__ uint64_t c_n[4] = {0xd0364141, 0xbaaedce6, 0xfffffffe, 0xffffffff};
-__device__ __constant__ uint64_t c_lambda[4] = {0x1b23bd72, 0x20816678, 0x8812645a, 0x0c05c30e};
-__device__ __constant__ uint64_t c_beta[4] = {0xc2a38c8f, 0x488e4478, 0xcdb4986e, 0x7c07107a};
+__device__ __constant__ unsigned long long c_p[4] = {0xfffffc2fULL, 0xffffffffULL, 0xffffffffULL, 0xffffffffULL};
+__device__ __constant__ unsigned long long c_n[4] = {0xd0364141ULL, 0xbaaedce6ULL, 0xfffffffeULL, 0xffffffffULL};
+__device__ __constant__ unsigned long long c_lambda[4] = {0x1b23bd72ULL, 0x20816678ULL, 0x8812645aULL, 0x0c05c30eULL};
+__device__ __constant__ unsigned long long c_beta[4] = {0xc2a38c8fULL, 0x488e4478ULL, 0xcdb4986eULL, 0x7c07107aULL};
 
 // Barrett reduction constant mu = floor(2^512 / p)
-__device__ __constant__ uint64_t c_mu[5] = {0x1000003d1, 0, 0, 0, 1};
+__device__ __constant__ unsigned long long c_mu[5] = {0x1000003d1ULL, 0ULL, 0ULL, 0ULL, 1ULL};
 
 // GLV coefficients (precomputed, little-endian)
-__device__ __constant__ uint64_t c_a1[4] = {0xe86c90e4, 0x3086d221, 0, 0};
-__device__ __constant__ uint64_t c_a2[4] = {0x657c1108, 0x114ca50f, 0, 0};
-__device__ __constant__ uint64_t c_b1[4] = {0x06f547fa, 0xe4437ed6, 0, 0};
-__device__ __constant__ uint64_t c_b2[4] = {0xe86c90e4, 0x3086d221, 0, 0};
+__device__ __constant__ unsigned long long c_a1[4] = {0xe86c90e4ULL, 0x3086d221ULL, 0ULL, 0ULL};
+__device__ __constant__ unsigned long long c_a2[4] = {0x657c1108ULL, 0x114ca50fULL, 0ULL, 0ULL};
+__device__ __constant__ unsigned long long c_b1[4] = {0x06f547faULL, 0xe4437ed6ULL, 0ULL, 0ULL};
+__device__ __constant__ unsigned long long c_b2[4] = {0xe86c90e4ULL, 0x3086d221ULL, 0ULL, 0ULL};
 
 __device__ int found_flag = 0;
 
@@ -53,9 +53,9 @@ __device__ int found_flag = 0;
     std::cerr << "CUDA Error: " << cudaGetErrorString(err) << " at " << __FILE__ << ":" << __LINE__ << std::endl; exit(EXIT_FAILURE); } } while(0)
 
 // Utility function for ge256
-__device__ bool ge256(const uint64_t a[4], const uint64_t b[4]);
+__device__ bool ge256(const unsigned long long a[4], const unsigned long long b[4]);
 
-__global__ void scalarMulKernelBase(const uint64_t* scalars_in, uint64_t* outX, uint64_t* outY, int N, uint64_t* d_pre_Gx, uint64_t* d_pre_Gy, uint64_t* d_pre_phiGx, uint64_t* d_pre_phiGy);
-__global__ void precompute_table_kernel(JacobianPoint base, uint64_t* pre_x, uint64_t* pre_y, uint64_t size);
+__global__ void scalarMulKernelBase(const unsigned long long* scalars_in, unsigned long long* outX, unsigned long long* outY, int N, unsigned long long* d_pre_Gx, unsigned long long* d_pre_Gy, unsigned long long* d_pre_phiGx, unsigned long long* d_pre_phiGy);
+__global__ void precompute_table_kernel(JacobianPoint base, unsigned long long* pre_x, unsigned long long* pre_y, unsigned long long size);
 
 #endif // CUDA_STRUCTURES_H

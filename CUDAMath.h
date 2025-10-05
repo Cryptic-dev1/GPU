@@ -31,13 +31,12 @@
 #define MADD(r, a, b, c) asm volatile ("madc.hi.u64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c))
 #define MADDS(r, a, b, c) asm volatile ("madc.hi.s64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c))
 
-__device__ __constant__ uint64_t MM64 = 0xD838091DD2253531ULL;
-__device__ __constant__ uint64_t MSK62 = 0x3FFFFFFFFFFFFFFFULL;
+__device__ __constant__ unsigned long long MM64 = 0xD838091DD2253531ULL;
+__device__ __constant__ unsigned long long MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 
-#define _IsPositive(x) (((int64_t)(x[3])) >= 0LL)
-#define _IsNegative(x) (((int64_t)(x[3])) < 0LL)
+#define _IsPositive(x) (((long long)(x[3])) >= 0LL)
+#define _IsNegative(x) (((long long)(x[3])) < 0LL)
 #define _IsEqual(a, b) ((a[3] == b[3]) && (a[2] == b[2]) && (a[1] == b[1]) && (a[0] == b[0]))
-#define _IsZero(a) ((a[3] | a[2] | a[1] | a[0]) == 0ULL)
 #define _IsOne(a) ((a[3] == 0ULL) && (a[2] == 0ULL) && (a[1] == 0ULL) && (a[0] == 1ULL))
 
 #define IDX threadIdx.x
@@ -55,23 +54,23 @@ __device__ __constant__ uint64_t MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 }
 
 // Field Utility Functions
-__device__ void fieldSetZero(uint64_t a[4]) {
+__device__ void fieldSetZero(unsigned long long a[4]) {
     #pragma unroll
     for (int i = 0; i < 4; ++i) a[i] = 0ULL;
 }
 
-__device__ void fieldSetOne(uint64_t a[4]) {
+__device__ void fieldSetOne(unsigned long long a[4]) {
     a[0] = 1ULL;
     #pragma unroll
     for (int i = 1; i < 4; ++i) a[i] = 0ULL;
 }
 
-__device__ void fieldCopy(const uint64_t a[4], uint64_t b[4]) {
+__device__ void fieldCopy(const unsigned long long a[4], unsigned long long b[4]) {
     #pragma unroll
     for (int i = 0; i < 4; ++i) b[i] = a[i];
 }
 
-__device__ void lsl256(uint64_t a[4], uint64_t out[4], int n) {
+__device__ void lsl256(unsigned long long a[4], unsigned long long out[4], int n) {
     if (n >= 256) {
         fieldSetZero(out);
         return;
@@ -87,7 +86,7 @@ __device__ void lsl256(uint64_t a[4], uint64_t out[4], int n) {
     }
 }
 
-__device__ void lsr256(uint64_t a[4], uint64_t out[4], int n) {
+__device__ void lsr256(unsigned long long a[4], unsigned long long out[4], int n) {
     if (n >= 256) {
         fieldSetZero(out);
         return;
@@ -103,7 +102,7 @@ __device__ void lsr256(uint64_t a[4], uint64_t out[4], int n) {
     }
 }
 
-__device__ void lsl512(const uint64_t a[4], int n, uint64_t out[8]) {
+__device__ void lsl512(const unsigned long long a[4], int n, unsigned long long out[8]) {
     fieldSetZero(out);
     int limb = n / 64;
     int bit_shift = n % 64;
@@ -117,7 +116,7 @@ __device__ void lsl512(const uint64_t a[4], int n, uint64_t out[8]) {
     }
 }
 
-__device__ bool ge512(const uint64_t a[8], const uint64_t b[8]) {
+__device__ bool ge512(const unsigned long long a[8], const unsigned long long b[8]) {
     for (int i = 7; i >= 0; --i) {
         if (a[i] > b[i]) return true;
         if (a[i] < b[i]) return false;
@@ -125,8 +124,8 @@ __device__ bool ge512(const uint64_t a[8], const uint64_t b[8]) {
     return true;
 }
 
-__device__ void sub512(const uint64_t a[8], const uint64_t b[8], uint64_t out[8]) {
-    uint64_t borrow = 0, temp;
+__device__ void sub512(const unsigned long long a[8], const unsigned long long b[8], unsigned long long out[8]) {
+    unsigned long long borrow = 0, temp;
     #pragma unroll
     for (int i = 0; i < 8; ++i) {
         USUBO(temp, a[i], b[i]);
@@ -137,8 +136,8 @@ __device__ void sub512(const uint64_t a[8], const uint64_t b[8], uint64_t out[8]
 }
 
 // Optimized Field Operations
-__device__ void fieldAdd_opt(const uint64_t a[4], const uint64_t b[4], uint64_t out[4]) {
-    uint64_t carry = 0, temp;
+__device__ void fieldAdd_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
+    unsigned long long carry = 0, temp;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
         UADDO(temp, a[i], b[i]);
@@ -154,8 +153,8 @@ __device__ void fieldAdd_opt(const uint64_t a[4], const uint64_t b[4], uint64_t 
     }
 }
 
-__device__ void fieldSub_opt(const uint64_t a[4], const uint64_t b[4], uint64_t out[4]) {
-    uint64_t borrow = 0, temp;
+__device__ void fieldSub_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
+    unsigned long long borrow = 0, temp;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
         USUBO(temp, a[i], b[i]);
@@ -171,24 +170,24 @@ __device__ void fieldSub_opt(const uint64_t a[4], const uint64_t b[4], uint64_t 
     }
 }
 
-__device__ void mul256(const uint64_t a[4], const uint64_t b[4], uint64_t out[8]) {
+__device__ void mul256(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[8]) {
     fieldSetZero(out);
-    uint64_t lo, hi, carry;
+    unsigned long long lo, hi, carry;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
         carry = 0;
         #pragma unroll
         for (int j = 0; j < 4; ++j) {
-            uint64_t ai = a[i];
-            uint64_t bj = b[j];
+            unsigned long long ai = a[i];
+            unsigned long long bj = b[j];
             UMULLO(lo, ai, bj);
             UMULHI(hi, ai, bj);
-            uint64_t sum = lo + carry;
+            unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1 : 0;
-            uint64_t out_ij = out[i+j];
+            unsigned long long out_ij = out[i+j];
             out[i+j] = out_ij + sum;
             carry += (out[i+j] < out_ij) ? 1 : 0;
-            uint64_t out_ij1 = out[i+j+1];
+            unsigned long long out_ij1 = out[i+j+1];
             out[i+j+1] = out_ij1 + hi + carry;
             carry = (out[i+j+1] < hi) ? 1 : 0;
         }
@@ -196,24 +195,24 @@ __device__ void mul256(const uint64_t a[4], const uint64_t b[4], uint64_t out[8]
     }
 }
 
-__device__ void mul_high(const uint64_t a[4], const uint64_t b[5], uint64_t high[5]) {
-    uint64_t prod[9] = {0};
-    uint64_t lo, hi, carry;
+__device__ void mul_high(const unsigned long long a[4], const unsigned long long b[5], unsigned long long high[5]) {
+    unsigned long long prod[9] = {0};
+    unsigned long long lo, hi, carry;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
         carry = 0;
         #pragma unroll
         for (int j = 0; j < 5; ++j) {
-            uint64_t ai = a[i];
-            uint64_t bj = b[j];
+            unsigned long long ai = a[i];
+            unsigned long long bj = b[j];
             UMULLO(lo, ai, bj);
             UMULHI(hi, ai, bj);
-            uint64_t sum = lo + carry;
+            unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1 : 0;
-            uint64_t prod_ij = prod[i+j];
+            unsigned long long prod_ij = prod[i+j];
             prod[i+j] = prod_ij + sum;
             carry += (prod[i+j] < prod_ij) ? 1 : 0;
-            uint64_t prod_ij1 = prod[i+j+1];
+            unsigned long long prod_ij1 = prod[i+j+1];
             prod[i+j+1] = prod_ij1 + hi + carry;
             carry = (prod[i+j+1] < hi) ? 1 : 0;
         }
@@ -223,8 +222,8 @@ __device__ void mul_high(const uint64_t a[4], const uint64_t b[5], uint64_t high
     for (int i = 0; i < 5; ++i) high[i] = prod[i+4];
 }
 
-__device__ void modred_barrett_opt(const uint64_t input[8], uint64_t out[4]) {
-    uint64_t q[5], tmp[8], r[4];
+__device__ void modred_barrett_opt(const unsigned long long input[8], unsigned long long out[4]) {
+    unsigned long long q[5], tmp[8], r[4];
     mul_high(input+4, c_mu, q);
     mul256(q, c_p, tmp);
     fieldSub_opt(input, tmp, r);
@@ -237,30 +236,30 @@ __device__ void modred_barrett_opt(const uint64_t input[8], uint64_t out[4]) {
     fieldCopy(r, out);
 }
 
-__device__ void fieldMul_opt(const uint64_t a[4], const uint64_t b[4], uint64_t out[4]) {
-    uint64_t prod[8];
+__device__ void fieldMul_opt(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
+    unsigned long long prod[8];
     mul256(a, b, prod);
     modred_barrett_opt(prod, out);
 }
 
-__device__ void fieldSqr_opt(const uint64_t a[4], uint64_t out[4]) {
+__device__ void fieldSqr_opt(const unsigned long long a[4], unsigned long long out[4]) {
     fieldMul_opt(a, a, out);
 }
 
-__device__ void fieldNeg(const uint64_t a[4], uint64_t out[4]) {
-    if (_IsZero(a)) {
+__device__ void fieldNeg(const unsigned long long a[4], unsigned long long out[4]) {
+    if (isZero256(a)) {
         fieldSetZero(out);
         return;
     }
     fieldSub_opt(c_p, a, out);
 }
 
-__device__ void fieldInvFermat(const uint64_t a[4], uint64_t inv[4]) {
-    if (_IsZero(a)) {
+__device__ void fieldInvFermat(const unsigned long long a[4], unsigned long long inv[4]) {
+    if (isZero256(a)) {
         fieldSetZero(inv);
         return;
     }
-    uint64_t t[4], p_minus_2[4] = {0xfffffc2d, 0xffffffff, 0xffffffff, 0xffffffff};
+    unsigned long long t[4], p_minus_2[4] = {0xfffffc2d, 0xffffffff, 0xffffffff, 0xffffffff};
     fieldCopy(a, t);
     for (int i = 255; i >= 1; --i) {
         fieldSqr_opt(t, t);
@@ -271,10 +270,10 @@ __device__ void fieldInvFermat(const uint64_t a[4], uint64_t inv[4]) {
     fieldCopy(t, inv);
 }
 
-__device__ void batch_modinv_fermat(const uint64_t* a, uint64_t* inv, int n) {
-    extern __shared__ uint64_t shared[];
-    uint64_t *prefix = shared;
-    uint64_t prod[4], tmp[4];
+__device__ void batch_modinv_fermat(const unsigned long long* a, unsigned long long* inv, int n) {
+    extern __shared__ unsigned long long shared[];
+    unsigned long long *prefix = shared;
+    unsigned long long prod[4], tmp[4];
     int tid = threadIdx.x % WARP_SIZE;
     if (tid == 0) {
         fieldSetOne(prefix);
@@ -295,8 +294,8 @@ __device__ void batch_modinv_fermat(const uint64_t* a, uint64_t* inv, int n) {
 }
 
 // Division for GLV
-__device__ void div512_256(const uint64_t num[8], const uint64_t den[4], uint64_t quot[4], uint64_t rem[4]) {
-    uint64_t dividend[8], shifted_den[8], q[4] = {0};
+__device__ void div512_256(const unsigned long long num[8], const unsigned long long den[4], unsigned long long quot[4], unsigned long long rem[4]) {
+    unsigned long long dividend[8], shifted_den[8], q[4] = {0};
     fieldCopy(num, dividend);
     for (int bit = 255; bit >= 0; --bit) {
         lsl256(q, q, 1);
@@ -311,8 +310,8 @@ __device__ void div512_256(const uint64_t num[8], const uint64_t den[4], uint64_
 }
 
 // GLV Endomorphism
-__device__ void split_glv(const uint64_t scalar[4], uint64_t k1[4], uint64_t k2[4]) {
-    uint64_t num[8], half_n[4], q1[4], q2[4], tmp1[4], tmp2[4], rem[4];
+__device__ void split_glv(const unsigned long long scalar[4], unsigned long long k1[4], unsigned long long k2[4]) {
+    unsigned long long num[8], half_n[4], q1[4], q2[4], tmp1[4], tmp2[4], rem[4];
     fieldCopy(c_n, half_n);
     lsr256(half_n, half_n, 1);
     // q1 = round(b2 * scalar / n)
@@ -355,13 +354,13 @@ __device__ void pointSetG(JacobianPoint &P) {
     P.infinity = false;
 }
 
-__device__ void pointToAffine(const JacobianPoint &P, uint64_t outX[4], uint64_t outY[4]) {
-    if (P.infinity || _IsZero(P.z)) {
+__device__ void pointToAffine(const JacobianPoint &P, unsigned long long outX[4], unsigned long long outY[4]) {
+    if (P.infinity || isZero256(P.z)) {
         fieldSetZero(outX);
         fieldSetZero(outY);
         return;
     }
-    uint64_t zinv[4], zinv2[4];
+    unsigned long long zinv[4], zinv2[4];
     fieldInvFermat(P.z, zinv);
     fieldSqr_opt(zinv, zinv2);
     fieldMul_opt(P.x, zinv2, outX);
@@ -370,11 +369,11 @@ __device__ void pointToAffine(const JacobianPoint &P, uint64_t outX[4], uint64_t
 }
 
 __device__ void pointDoubleJacobian(const JacobianPoint &P, JacobianPoint &R) {
-    if (P.infinity || _IsZero(P.z)) {
+    if (P.infinity || isZero256(P.z)) {
         pointSetInfinity(R);
         return;
     }
-    uint64_t u[4], m[4], s[4], t[4], zz[4], tmp[4];
+    unsigned long long u[4], m[4], s[4], t[4], zz[4], tmp[4];
     fieldSqr_opt(P.y, u);
     fieldSqr_opt(P.z, zz);
     fieldSqr_opt(u, t);
@@ -399,15 +398,15 @@ __device__ void pointDoubleJacobian(const JacobianPoint &P, JacobianPoint &R) {
 }
 
 __device__ void pointAddJacobian(const JacobianPoint &P, const JacobianPoint &Q, JacobianPoint &R) {
-    if (P.infinity || _IsZero(P.z)) {
+    if (P.infinity || isZero256(P.z)) {
         R = Q;
         return;
     }
-    if (Q.infinity || _IsZero(Q.z)) {
+    if (Q.infinity || isZero256(Q.z)) {
         R = P;
         return;
     }
-    uint64_t z1z1[4], z2z2[4], u1[4], u2[4], s1[4], s2[4], h[4], i[4], j[4], r[4], v[4], tmp[4];
+    unsigned long long z1z1[4], z2z2[4], u1[4], u2[4], s1[4], s2[4], h[4], i[4], j[4], r[4], v[4], tmp[4];
     fieldSqr_opt(P.z, z1z1);
     fieldSqr_opt(Q.z, z2z2);
     fieldMul_opt(P.x, z2z2, u1);
@@ -448,8 +447,8 @@ __device__ void pointAddJacobian(const JacobianPoint &P, const JacobianPoint &Q,
     R.infinity = false;
 }
 
-__device__ void pointAddMixed(const JacobianPoint &P, const uint64_t Qx[4], const uint64_t Qy[4], bool Qinf, JacobianPoint &R) {
-    if (P.infinity || _IsZero(P.z)) {
+__device__ void pointAddMixed(const JacobianPoint &P, const unsigned long long Qx[4], const unsigned long long Qy[4], bool Qinf, JacobianPoint &R) {
+    if (P.infinity || isZero256(P.z)) {
         if (Qinf) {
             pointSetInfinity(R);
         } else {
@@ -464,7 +463,7 @@ __device__ void pointAddMixed(const JacobianPoint &P, const uint64_t Qx[4], cons
         R = P;
         return;
     }
-    uint64_t z1z1[4], u2[4], s2[4], h[4], i[4], j[4], r[4], v[4], tmp[4];
+    unsigned long long z1z1[4], u2[4], s2[4], h[4], i[4], j[4], r[4], v[4], tmp[4];
     fieldSqr_opt(P.z, z1z1);
     fieldMul_opt(Qx, z1z1, u2);
     fieldMul_opt(Qy, P.z, s2);
@@ -489,26 +488,26 @@ __device__ void pointAddMixed(const JacobianPoint &P, const uint64_t Qx[4], cons
     R.infinity = false;
 }
 
-__device__ int find_msb(const uint64_t a[4]) {
+__device__ int find_msb(const unsigned long long a[4]) {
     for (int i = 3; i >= 0; --i) {
         if (a[i] != 0) return i * 64 + 63 - __clzll(a[i]);
     }
     return -1;
 }
 
-__device__ uint32_t get_window(const uint64_t a[4], int pos) {
+__device__ uint32_t get_window(const unsigned long long a[4], int pos) {
     int limb = pos >> 6;
     int shift = pos & 63;
     if (limb >= 4) return 0;
-    uint64_t bits = a[limb] >> shift;
+    unsigned long long bits = a[limb] >> shift;
     if (shift > 64 - PRECOMPUTE_WINDOW && limb < 3) {
         bits |= a[limb+1] << (64 - shift);
     }
     return bits & ((1ULL << PRECOMPUTE_WINDOW) - 1);
 }
 
-__device__ void scalarMulBaseJacobian(const uint64_t scalar_le[4], uint64_t outX[4], uint64_t outY[4], uint64_t* d_pre_Gx, uint64_t* d_pre_Gy, uint64_t* d_pre_phiGx, uint64_t* d_pre_phiGy) {
-    uint64_t k1[4], k2[4];
+__device__ void scalarMulBaseJacobian(const unsigned long long scalar_le[4], unsigned long long outX[4], unsigned long long outY[4], unsigned long long* d_pre_Gx, unsigned long long* d_pre_Gy, unsigned long long* d_pre_phiGx, unsigned long long* d_pre_phiGy) {
+    unsigned long long k1[4], k2[4];
     split_glv(scalar_le, k1, k2);
     JacobianPoint R1, R2, R;
     pointSetInfinity(R1);
@@ -546,17 +545,17 @@ __device__ void scalarMulBaseJacobian(const uint64_t scalar_le[4], uint64_t outX
     pointToAffine(R, outX, outY);
 }
 
-__global__ void scalarMulKernelBase(const uint64_t* scalars_in, uint64_t* outX, uint64_t* outY, int N, uint64_t* d_pre_Gx, uint64_t* d_pre_Gy, uint64_t* d_pre_phiGx, uint64_t* d_pre_phiGy) {
+__global__ void scalarMulKernelBase(const unsigned long long* scalars_in, unsigned long long* outX, unsigned long long* outY, int N, unsigned long long* d_pre_Gx, unsigned long long* d_pre_Gy, unsigned long long* d_pre_phiGx, unsigned long long* d_pre_phiGy) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N) return;
     scalarMulBaseJacobian(scalars_in + idx*4, outX + idx*4, outY + idx*4, d_pre_Gx, d_pre_Gy, d_pre_phiGx, d_pre_phiGy);
 }
 
-__global__ void precompute_table_kernel(JacobianPoint base, uint64_t* pre_x, uint64_t* pre_y, uint64_t size) {
-    uint64_t idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void precompute_table_kernel(JacobianPoint base, unsigned long long* pre_x, unsigned long long* pre_y, unsigned long long size) {
+    unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
     JacobianPoint P = base;
-    for (uint64_t bit = 0; bit < idx; ++bit) {
+    for (unsigned long long bit = 0; bit < idx; ++bit) {
         if (bit % 2 == 0) {
             pointDoubleJacobian(P, P);
         } else {

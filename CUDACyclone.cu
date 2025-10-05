@@ -18,9 +18,8 @@
 #include "sha256.h"
 #include "CUDAHash.cuh"
 #include "CUDAUtils.h"
-#include "CUDAStructures.h"
 
-// Local FoundResult struct with unsigned long long for arrays
+// Local FoundResult struct for both host and device
 struct FoundResult {
     int threadId;
     int iter;
@@ -31,7 +30,7 @@ struct FoundResult {
 
 // Namespace for utility functions
 namespace CryptoUtils {
-    std::string formatHex256(const unsigned long long limbs[4]) {
+    std::string formatHex256(const unsigned long long* limbs) {
         std::ostringstream oss;
         oss << std::hex << std::uppercase << std::setfill('0');
         for (int i = 3; i >= 0; --i) {
@@ -40,7 +39,7 @@ namespace CryptoUtils {
         return oss.str();
     }
 
-    std::string formatCompressedPubHex(const unsigned long long Rx[4], const unsigned long long Ry[4]) {
+    std::string formatCompressedPubHex(const unsigned long long* Rx, const unsigned long long* Ry) {
         uint8_t out[33];
         out[0] = (Ry[0] & 1ULL) ? 0x03 : 0x02;
         int off = 1;
@@ -75,6 +74,10 @@ __device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found
     if (lane == 0) f = load_found_flag_relaxed(d_found_flag);
     f = __shfl_sync(full_mask, f, 0);
     return f == FOUND_READY;
+}
+
+__device__ __host__ __forceinline__ bool isZero256(const unsigned long long a[4]) {
+    return (a[3] | a[2] | a[1] | a[0]) == 0ULL;
 }
 
 __launch_bounds__(256, 2)
@@ -121,7 +124,7 @@ __global__ void fused_ec_hash(
         rem[i] = counts256[gid*4 + i];
     }
 
-    if (_IsZero(rem)) {
+    if (isZero256(rem)) {
         R[gid] = P_local;
         WARP_FLUSH_HASHES();
         return;
@@ -200,7 +203,7 @@ __global__ void fused_ec_hash(
         sub256_u64_inplace(rem, (unsigned long long)B);
         inc256_device(S, (unsigned long long)B);
         batches_done++;
-        if (_IsZero(rem)) {
+        if (isZero256(rem)) {
             atomicOr(d_any_left, 0u);
         } else {
             atomicOr(d_any_left, 1u);
@@ -436,7 +439,7 @@ int main(int argc, char* argv[]) {
         fieldCopy(h_outX + i * 4, h_P[i].x);
         fieldCopy(h_outY + i * 4, h_P[i].y);
         fieldSetOne(h_P[i].z);
-        h_P[i].infinity = _IsZero(h_outX + i * 4) && _IsZero(h_outY + i * 4);
+        h_P[i].infinity = isZero256(h_outX + i * 4) && isZero256(h_outY + i * 4);
     }
     CUDA_CHECK(cudaMemcpy(d_P, h_P, threadsTotal * sizeof(JacobianPoint), cudaMemcpyHostToDevice));
     delete[] h_P; delete[] h_outX; delete[] h_outY;
