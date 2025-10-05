@@ -73,7 +73,7 @@ __device__ __forceinline__ uint32_t pack_be4(uint8_t a, uint8_t b, uint8_t c, ui
     return ((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)c << 8) | d;
 }
 
-__device__ void SHA256_33_from_limbs(uint8_t prefix02_03, const uint64_t x_be_limbs[4], uint32_t out_state[8]) {
+__device__ void SHA256_33_from_limbs(uint8_t prefix02_03, const unsigned long long x_be_limbs[4], uint32_t out_state[8]) {
     uint32_t W[16];
     W[0] = pack_be4(prefix02_03, (uint8_t)(x_be_limbs[3]>>56), (uint8_t)(x_be_limbs[3]>>48), (uint8_t)(x_be_limbs[3]>>40));
     W[1] = pack_be4((uint8_t)(x_be_limbs[3]>>32), (uint8_t)(x_be_limbs[3]>>24), (uint8_t)(x_be_limbs[3]>>16), (uint8_t)(x_be_limbs[3]>>8));
@@ -193,7 +193,7 @@ __device__ void RIPEMD160_from_SHA256_state(const uint32_t sha_state_be[8], uint
     }
 }
 
-__device__ void getHash160_33_from_limbs(uint8_t prefix02_03, const uint64_t x_be_limbs[4], uint8_t out20[20]) {
+__device__ void getHash160_33_from_limbs(uint8_t prefix02_03, const unsigned long long x_be_limbs[4], uint8_t out20[20]) {
     uint32_t sha_state[8];
     SHA256_33_from_limbs(prefix02_03, x_be_limbs, sha_state);
     RIPEMD160_from_SHA256_state(sha_state, out20);
