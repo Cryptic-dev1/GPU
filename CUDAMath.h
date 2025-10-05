@@ -14,7 +14,7 @@
 // Verify unsigned long long size
 static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bits");
 
-// PTX Assembly Macros (always defined for device code)
+// PTX Assembly Macros
 #define UADDO(c, a, b) asm volatile ("add.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADDC(c, a, b) asm volatile ("addc.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADD(c, a, b) asm volatile ("addc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b))
@@ -37,12 +37,11 @@ static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bi
 __device__ __constant__ unsigned long long MM64 = 0xD838091DD2253531ULL;
 __device__ __constant__ unsigned long long MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 
-// Host-side copy of c_p for __host__ execution
+// Host-side copy of c_p
 static const unsigned long long host_c_p[4] = {0xfffffc2fULL, 0xffffffffULL, 0xffffffffULL, 0xffffffffULL};
 
 // Utility function for zero check
 __host__ __device__ __forceinline__ bool isZero256(const unsigned long long a[4]) {
-    static_assert(sizeof(a[0]) == 8, "Array elements must be 64 bits");
     return (a[3] | a[2] | a[1] | a[0]) == 0ULL;
 }
 
@@ -182,9 +181,6 @@ __host__ void fieldSub_opt_host(const unsigned long long a[4], const unsigned lo
 }
 
 __host__ void mul256_host(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[8]) {
-    static_assert(sizeof(a[0]) == 8, "Input array elements must be 64 bits");
-    static_assert(sizeof(b[0]) == 8, "Input array elements must be 64 bits");
-    static_assert(sizeof(out[0]) == 8, "Output array elements must be 64 bits");
     unsigned long long temp_out[8] = {0};
     unsigned long long lo, hi, carry;
     #pragma unroll
@@ -213,9 +209,6 @@ __host__ void mul256_host(const unsigned long long a[4], const unsigned long lon
 }
 
 __host__ void mul_high_host(const unsigned long long a[4], const unsigned long long b[5], unsigned long long high[5]) {
-    static_assert(sizeof(a[0]) == 8, "Input array elements must be 64 bits");
-    static_assert(sizeof(b[0]) == 8, "Input array elements must be 64 bits");
-    static_assert(sizeof(high[0]) == 8, "Output array elements must be 64 bits");
     unsigned long long temp_prod[9] = {0};
     unsigned long long lo, hi, carry;
     #pragma unroll
@@ -319,9 +312,6 @@ __device__ void fieldSub_opt_device(const unsigned long long a[4], const unsigne
 }
 
 __device__ void mul256_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[8]) {
-    static_assert(sizeof(a[0]) == 8, "Input array elements must be 64 bits");
-    static_assert(sizeof(b[0]) == 8, "Input array elements must be 64 bits");
-    static_assert(sizeof(out[0]) == 8, "Output array elements must be 64 bits");
     unsigned long long temp_out[8] = {0};
     unsigned long long lo, hi, carry;
     #pragma unroll
@@ -349,9 +339,6 @@ __device__ void mul256_device(const unsigned long long a[4], const unsigned long
 }
 
 __device__ void mul_high_device(const unsigned long long a[4], const unsigned long long b[5], unsigned long long high[5]) {
-    static_assert(sizeof(a[0]) == 8, "Input array elements must be 64 bits");
-    static_assert(sizeof(b[0]) == 8, "Input array elements must be 64 bits");
-    static_assert(sizeof(high[0]) == 8, "Output array elements must be 64 bits");
     unsigned long long temp_prod[9] = {0};
     unsigned long long lo, hi, carry;
     #pragma unroll
@@ -438,16 +425,27 @@ __device__ void batch_modinv_fermat(const unsigned long long* a, unsigned long l
     if (tid == 0) {
         fieldSetOne(prefix);
         for (int i = 0; i < n; ++i) {
-            fieldMul_opt_device(prefix + i*4, a + i*4, prefix + (i+1)*4);
+            if (i + 1 <= n) { // Bounds check
+                if (isZero256(a + i*4)) {
+                    fieldSetZero(prefix + (i+1)*4);
+                } else {
+                    fieldMul_opt_device(prefix + i*4, a + i*4, prefix + (i+1)*4);
+                }
+            }
         }
-        fieldInvFermat_device(prefix + n*4, prod);
-    }
-    __syncthreads();
-    if (tid == 0) {
+        if (!isZero256(prefix + n*4)) {
+            fieldInvFermat_device(prefix + n*4, prod);
+        } else {
+            fieldSetZero(prod);
+        }
         fieldCopy(prod, tmp);
         for (int i = n-1; i >= 0; --i) {
-            fieldMul_opt_device(tmp, prefix + i*4, inv + i*4);
-            fieldMul_opt_device(tmp, a + i*4, tmp);
+            if (isZero256(a + i*4)) {
+                fieldSetZero(inv + i*4);
+            } else {
+                fieldMul_opt_device(tmp, prefix + i*4, inv + i*4);
+                fieldMul_opt_device(tmp, a + i*4, tmp);
+            }
         }
     }
     __syncthreads();
@@ -669,6 +667,10 @@ __device__ uint32_t get_window(const unsigned long long a[4], int pos) {
 __device__ void scalarMulBaseJacobian(const unsigned long long scalar_le[4], unsigned long long outX[4], unsigned long long outY[4], unsigned long long* d_pre_Gx, unsigned long long* d_pre_Gy, unsigned long long* d_pre_phiGx, unsigned long long* d_pre_phiGy) {
     unsigned long long k1[4], k2[4];
     split_glv(scalar_le, k1, k2);
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("scalarMulBaseJacobian: k1=%llx:%llx:%llx:%llx, k2=%llx:%llx:%llx:%llx\n",
+               k1[0], k1[1], k1[2], k1[3], k2[0], k2[1], k2[2], k2[3]);
+    }
     JacobianPoint R1, R2, R;
     pointSetInfinity(R1);
     pointSetInfinity(R2);
@@ -702,6 +704,9 @@ __device__ void scalarMulBaseJacobian(const unsigned long long scalar_le[4], uns
     }
     fieldMul_opt_device(R2.x, c_beta, R2.x);
     pointAddJacobian(R1, R2, R);
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("scalarMulBaseJacobian: R.infinity=%d\n", R.infinity);
+    }
     pointToAffine(R, outX, outY);
 }
 
