@@ -149,32 +149,46 @@ __global__ void fused_ec_hash(
 
         // Batch point additions
         for (int i = 0; i < half; ++i) {
-            if (lane + i * WARP_SIZE >= batch_size / 2) continue; // Bounds check
+            if (lane + i * WARP_SIZE >= batch_size / 2) continue;
             JacobianPoint Q;
-            fieldCopy(c_Gx + (lane + i * WARP_SIZE) * 4, Q.x);
-            fieldCopy(c_Gy + (lane + i * WARP_SIZE) * 4, Q.y);
+            if ((lane + i * WARP_SIZE) * 4 < batch_size * 4) {
+                fieldCopy(c_Gx + (lane + i * WARP_SIZE) * 4, Q.x);
+                fieldCopy(c_Gy + (lane + i * WARP_SIZE) * 4, Q.y);
+            } else {
+                fieldSetZero(Q.x);
+                fieldSetZero(Q.y);
+            }
             fieldSetOne(Q.z);
             Q.infinity = false;
             pointAddMixed(P_local, Q.x, Q.y, Q.infinity, P_local);
-            if (lane + half + i * WARP_SIZE >= batch_size / 2) continue; // Bounds check
-            fieldCopy(c_Gx + (lane + half + i * WARP_SIZE) * 4, Q.x);
-            fieldCopy(c_Gy + (lane + half + i * WARP_SIZE) * 4, Q.y);
+            if (lane + half + i * WARP_SIZE >= batch_size / 2) continue;
+            if ((lane + half + i * WARP_SIZE) * 4 < batch_size * 4) {
+                fieldCopy(c_Gx + (lane + half + i * WARP_SIZE) * 4, Q.x);
+                fieldCopy(c_Gy + (lane + half + i * WARP_SIZE) * 4, Q.y);
+            } else {
+                fieldSetZero(Q.x);
+                fieldSetZero(Q.y);
+            }
             pointAddMixed(P_local, Q.x, Q.y, Q.infinity, P_local);
         }
 
         // Batch inversion
-        if (lane < B) { // Fixed: Restrict shared memory writes to batch_size
+        if (lane < B) {
             fieldCopy(P_local.z, z_values + lane * 4);
+            if (lane == 0) {
+                printf("Block %d, lane %d, writing z_values[0]=%llx\n", blockIdx.x, lane, z_values[0]);
+            }
         }
         __syncthreads();
         if (lane == 0) {
-            batch_modinv_fermat(z_values, z_values, B); // Ensure batch_modinv_fermat respects B
+            batch_modinv_fermat(z_values, z_values, B);
+            printf("Block %d, lane 0, after batch_modinv_fermat, z_values[0]=%llx\n", blockIdx.x, z_values[0]);
         }
         __syncthreads();
 
         // Convert to affine and hash
         unsigned long long x_affine[4], y_affine[4];
-        if (lane < B && !P_local.infinity) { // Fixed: Restrict computation to batch_size
+        if (lane < B && !P_local.infinity) {
             unsigned long long zinv[4], zinv2[4];
             fieldCopy(z_values + lane * 4, zinv);
             fieldSqr_opt_device(zinv, zinv2);
@@ -242,7 +256,7 @@ __global__ void precompute_batch_points_kernel(unsigned long long* d_Gx, unsigne
     fieldCopy(G.y, d_Gy + idx * 4);
 
     // Compute 2^(i + batch_size/2) * G for second half
-    if (idx + batch_size / 2 < batch_size) { // Fixed: Bounds check for second half
+    if (idx + batch_size / 2 < batch_size) {
         pointDoubleJacobian(G, tmp);
         G = tmp;
         fieldCopy(G.x, d_Gx + (idx + batch_size / 2) * 4);
@@ -436,13 +450,17 @@ int main(int argc, char* argv[]) {
 
     // Precompute batch points on GPU
     unsigned long long *d_Gx, *d_Gy;
-    CUDA_CHECK(cudaMalloc(&d_Gx, batch_size * 4 * sizeof(unsigned long long))); // Fixed: Allocate for full batch_size
-    CUDA_CHECK(cudaMalloc(&d_Gy, batch_size * 4 * sizeof(unsigned long long))); // Fixed: Allocate for full batch_size
+    CUDA_CHECK(cudaMalloc(&d_Gx, batch_size * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_Gy, batch_size * 4 * sizeof(unsigned long long)));
     int threads = 256;
     int blocks_batch = (batch_size / 2 + threads - 1) / threads;
     precompute_batch_points_kernel<<<blocks_batch, threads>>>(d_Gx, d_Gy, batch_size);
     CUDA_CHECK(cudaDeviceSynchronize());
     std::cout << "precompute_batch_points_kernel completed" << std::endl;
+
+    // Copy to constant memory before testing
+    CUDA_CHECK(cudaMemcpyToSymbol(c_Gx, d_Gx, batch_size * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyToSymbol(c_Gy, d_Gy, batch_size * 4 * sizeof(unsigned long long)));
 
     // Test c_Gx and c_Gy
     unsigned long long *d_test_out;
@@ -456,8 +474,6 @@ int main(int argc, char* argv[]) {
     std::cout << "c_Gx[0]: " << std::hex << h_test_out[0] << std::endl;
     std::cout << "c_Gx[1]: " << std::hex << h_test_out[1] << std::endl;
 
-    CUDA_CHECK(cudaMemcpyToSymbol(c_Gx, d_Gx, batch_size * 4 * sizeof(unsigned long long))); // Fixed: Copy full batch_size
-    CUDA_CHECK(cudaMemcpyToSymbol(c_Gy, d_Gy, batch_size * 4 * sizeof(unsigned long long))); // Fixed: Copy full batch_size
     CUDA_CHECK(cudaFree(d_Gx));
     CUDA_CHECK(cudaFree(d_Gy));
 
@@ -498,6 +514,13 @@ int main(int argc, char* argv[]) {
             sub256(count, remaining, count);
         }
         fieldCopy(count, h_counts256 + i * 4);
+    }
+    // Debug scalar initialization
+    if (verbose) {
+        std::cout << "First scalar: " << std::hex << h_start_scalars[0] << ":" << h_start_scalars[1] << ":"
+                  << h_start_scalars[2] << ":" << h_start_scalars[3] << std::endl;
+        std::cout << "First count: " << std::hex << h_counts256[0] << ":" << h_counts256[1] << ":"
+                  << h_counts256[2] << ":" << h_counts256[3] << std::endl;
     }
     CUDA_CHECK(cudaMemcpy(d_start_scalars, h_start_scalars, threadsTotal * 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_counts256, h_counts256, threadsTotal * 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
@@ -543,7 +566,7 @@ int main(int argc, char* argv[]) {
     while (!stop_all) {
         dim3 gridDim(blocks, 1, 1);
         dim3 blockDim(threadsPerBlock, 1, 1);
-        size_t sharedMem = batch_size * 4 * sizeof(unsigned long long);
+        size_t sharedMem = batch_size * 4 * sizeof(unsigned long long) * 2; // Increased to 512 bytes
         fused_ec_hash<<<gridDim, blockDim, sharedMem, streamKernel>>>(
             d_P, d_R, d_start_scalars, d_counts256, threadsTotal, batch_size,
             max_batches_per_launch, d_found_flag, d_found_result, d_hashes_accum, d_any_left
