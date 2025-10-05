@@ -15,7 +15,6 @@
 #include <atomic>
 
 #include "CUDAMath.h"
-#include "sha256.h"
 #include "CUDAHash.cuh"
 #include "CUDAUtils.h"
 

@@ -14,6 +14,7 @@ __host__ void inc256(unsigned long long a[4], unsigned long long inc);
 __host__ void divmod_256_by_u64(const unsigned long long value[4], unsigned long long divisor, unsigned long long quotient[4], unsigned long long &remainder);
 bool hexToLE64(const std::string& h_in, unsigned long long w[4]);
 bool hexToHash160(const std::string& h, uint8_t hash160[20]);
+bool decode_p2pkh_address(const std::string& addr, uint8_t out_hash160[20]);
 __device__ void inc256_device(unsigned long long a[4], unsigned long long inc);
 __device__ uint32_t load_u32_le(const uint8_t* p);
 __device__ bool hash160_matches_prefix_then_full(const uint8_t* h, const uint8_t* target, uint32_t target_prefix_le);
