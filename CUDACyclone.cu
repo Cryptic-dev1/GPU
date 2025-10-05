@@ -140,12 +140,14 @@ __global__ void fused_ec_hash(
 
         // Batch point additions
         for (int i = 0; i < half; ++i) {
+            if (lane + i * WARP_SIZE >= batch_size / 2) continue; // Bounds check
             JacobianPoint Q;
             fieldCopy(c_Gx + (lane + i * WARP_SIZE) * 4, Q.x);
             fieldCopy(c_Gy + (lane + i * WARP_SIZE) * 4, Q.y);
             fieldSetOne(Q.z);
             Q.infinity = false;
             pointAddMixed(P_local, Q.x, Q.y, Q.infinity, P_local);
+            if (lane + half + i * WARP_SIZE >= batch_size / 2) continue; // Bounds check
             fieldCopy(c_Gx + (lane + half + i * WARP_SIZE) * 4, Q.x);
             fieldCopy(c_Gy + (lane + half + i * WARP_SIZE) * 4, Q.y);
             pointAddMixed(P_local, Q.x, Q.y, Q.infinity, P_local);
