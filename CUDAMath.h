@@ -181,8 +181,9 @@ __device__ void mul256(const uint64_t a[4], const uint64_t b[4], uint64_t out[8]
         carry = 0;
         #pragma unroll
         for (int j = 0; j < 4; ++j) {
-            UMULLO(lo, a[i], b[j]);
-            UMULHI(hi, a[i], b[j]);
+            uint64_t ai = a[i], bj = b[j];
+            UMULLO(lo, ai, bj);
+            UMULHI(hi, ai, bj);
             UADDO(lo, lo, carry);
             UADD1(hi, 0);
             UADDO(out[i+j], out[i+j], lo);
@@ -201,8 +202,9 @@ __device__ void mul_high(const uint64_t a[4], const uint64_t b[5], uint64_t high
         carry = 0;
         #pragma unroll
         for (int j = 0; j < 5; ++j) {
-            UMULLO(lo, a[i], b[j]);
-            UMULHI(hi, a[i], b[j]);
+            uint64_t ai = a[i], bj = b[j];
+            UMULLO(lo, ai, bj);
+            UMULHI(hi, ai, bj);
             UADDO(lo, lo, carry);
             UADD1(hi, 0);
             UADDO(prod[i+j], prod[i+j], lo);
