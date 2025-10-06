@@ -381,6 +381,10 @@ __device__ void modred_barrett_opt_device(const unsigned long long input[8], uns
 __device__ void fieldMul_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
     unsigned long long prod[8];
     mul256_device(a, b, prod);
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("fieldMul_opt_device: prod=%llx:%llx:%llx:%llx:%llx:%llx:%llx:%llx\n",
+               prod[0], prod[1], prod[2], prod[3], prod[4], prod[5], prod[6], prod[7]);
+    }
     modred_barrett_opt_device(prod, out);
 }
 
@@ -432,6 +436,9 @@ __device__ void batch_modinv_fermat(const unsigned long long* a, unsigned long l
                 }
             }
         }
+        if (tid == 0 && !isZero256(prefix + n*4)) {
+            printf("batch_modinv_fermat: prefix[%d]=%llx:%llx:%llx:%llx\n", n, prefix[n*4], prefix[n*4+1], prefix[n*4+2], prefix[n*4+3]);
+        }
         if (!isZero256(prefix + n*4)) {
             fieldInvFermat_device(prefix + n*4, prod);
         } else {
@@ -458,12 +465,44 @@ __device__ void div512_256(const unsigned long long num[8], const unsigned long 
         printf("div512_256: num=%llx:%llx:%llx:%llx:%llx:%llx:%llx:%llx\n",
                num[0], num[1], num[2], num[3], num[4], num[5], num[6], num[7]);
     }
-    for (int bit = 255; bit >= 0; --bit) {
-        lsl256(q, q, 1);
+    // Check if num < den
+    bool num_smaller = true;
+    for (int i = 3; i >= 0; --i) {
+        if (num[i+4] > 0) { num_smaller = false; break; }
+        if (num[i] > den[i]) { num_smaller = false; break; }
+        if (num[i] < den[i]) break;
+    }
+    if (num_smaller) {
+        fieldCopy(num, rem);
+        fieldSetZero(quot);
+        if (threadIdx.x == 0 && blockIdx.x == 0) {
+            printf("div512_256: num < den, q=0:0:0:0, rem=%llx:%llx:%llx:%llx\n",
+                   rem[0], rem[1], rem[2], rem[3]);
+        }
+        return;
+    }
+    int msb_num = -1;
+    for (int i = 7; i >= 0; --i) {
+        if (num[i] != 0) { msb_num = i * 64 + 63 - __clzll(num[i]); break; }
+    }
+    int msb_den = -1;
+    for (int i = 3; i >= 0; --i) {
+        if (den[i] != 0) { msb_den = i * 64 + 63 - __clzll(den[i]); break; }
+    }
+    if (msb_num < 0 || msb_den < 0) {
+        fieldSetZero(quot);
+        fieldCopy(num, rem);
+        return;
+    }
+    for (int bit = msb_num - msb_den; bit >= 0; --bit) {
         lsl512(den, bit, shifted_den);
         if (ge512(dividend, shifted_den)) {
             sub512(dividend, shifted_den, dividend);
-            q[0] |= 1ULL;
+            int limb = bit / 64;
+            int bit_pos = bit % 64;
+            if (limb < 4) {
+                q[limb] |= (1ULL << bit_pos);
+            }
         }
     }
     if (threadIdx.x == 0 && blockIdx.x == 0) {
