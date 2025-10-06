@@ -355,7 +355,7 @@ __device__ void mul_high_device(const unsigned long long a[4], const unsigned lo
             *(temp_prod + i + j) = prod_ij + sum;
             carry += (*(temp_prod + i + j) < prod_ij) ? 1ULL : 0ULL;
             unsigned long long prod_ij1 = *(temp_prod + i + j + 1);
-            *(temp_out + i + j + 1) = prod_ij1 + hi + carry;
+            *(temp_prod + i + j + 1) = prod_ij1 + hi + carry;
             carry = (*(temp_prod + i + j + 1) < hi) ? 1ULL : 0ULL;
         }
         if (i + 5 < 9) *(temp_prod + i + 5) = carry;
