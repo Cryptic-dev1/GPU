@@ -122,6 +122,9 @@ __host__ long double ld_from_u256(const unsigned long long a[4]) {
     return result;
 }
 
+// Declaration for getHash160_33_from_limbs (assumed defined in CUDAHash.cu)
+__device__ void getHash160_33_from_limbs(uint8_t prefix, const unsigned long long x[4], uint8_t h20[20]);
+
 // Namespace for utility functions
 namespace CryptoUtils {
     std::string formatHex256(const unsigned long long* limbs) {
