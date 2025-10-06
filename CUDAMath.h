@@ -355,7 +355,7 @@ __device__ void mul_high_device(const unsigned long long a[4], const unsigned lo
             *(temp_prod + i + j) = prod_ij + sum;
             carry += (*(temp_prod + i + j) < prod_ij) ? 1ULL : 0ULL;
             unsigned long long prod_ij1 = *(temp_prod + i + j + 1);
-            *(temp_prod + i + j + 1) = prod_ij1 + hi + carry;
+            *(temp_out + i + j + 1) = prod_ij1 + hi + carry;
             carry = (*(temp_prod + i + j + 1) < hi) ? 1ULL : 0ULL;
         }
         if (i + 5 < 9) *(temp_prod + i + 5) = carry;
@@ -443,6 +443,9 @@ __device__ void batch_modinv_fermat(const unsigned long long* a, unsigned long l
             fieldInvFermat_device(prefix + n*4, prod);
         } else {
             fieldSetZero(prod);
+            if (tid == 0) {
+                printf("batch_modinv_fermat: prefix[%d] is zero, setting prod=0\n", n);
+            }
         }
         fieldCopy(prod, tmp);
         for (int i = n-1; i >= 0; --i) {
@@ -516,6 +519,26 @@ __device__ void div512_256(const unsigned long long num[8], const unsigned long 
 
 // GLV Endomorphism
 __device__ void split_glv(const unsigned long long scalar[4], unsigned long long k1[4], unsigned long long k2[4]) {
+    if (isZero256(scalar)) {
+        fieldSetZero(k1);
+        fieldSetZero(k2);
+        return;
+    }
+    // Check if scalar < c_n
+    bool scalar_small = true;
+    for (int i = 3; i >= 0; --i) {
+        if (scalar[i] > c_n[i]) { scalar_small = false; break; }
+        if (scalar[i] < c_n[i]) break;
+    }
+    if (scalar_small) {
+        fieldCopy(scalar, k1);
+        fieldSetZero(k2);
+        if (threadIdx.x == 0 && blockIdx.x == 0) {
+            printf("split_glv: scalar_small, k1=%llx:%llx:%llx:%llx, k2=0:0:0:0\n",
+                   k1[0], k1[1], k1[2], k1[3]);
+        }
+        return;
+    }
     unsigned long long num[8], half_n[4], q1[4], q2[4], tmp1[4], tmp2[4], rem[4];
     fieldCopy(c_n, half_n);
     lsr256(half_n, half_n, 1);
