@@ -427,26 +427,30 @@ __device__ void batch_modinv_fermat(const unsigned long long* a, unsigned long l
     int tid = threadIdx.x % WARP_SIZE;
     if (tid == 0) {
         fieldSetOne(prefix);
+        bool all_zero = true;
         for (int i = 0; i < n; ++i) {
             if (i + 1 <= n) { // Bounds check
                 if (isZero256(a + i*4)) {
                     fieldSetZero(prefix + (i+1)*4);
                 } else {
                     fieldMul_opt_device(prefix + i*4, a + i*4, prefix + (i+1)*4);
+                    all_zero = false;
                 }
             }
         }
-        if (tid == 0 && !isZero256(prefix + n*4)) {
+        if (tid == 0) {
             printf("batch_modinv_fermat: prefix[%d]=%llx:%llx:%llx:%llx\n", n, prefix[n*4], prefix[n*4+1], prefix[n*4+2], prefix[n*4+3]);
         }
-        if (!isZero256(prefix + n*4)) {
-            fieldInvFermat_device(prefix + n*4, prod);
-        } else {
-            fieldSetZero(prod);
+        if (all_zero || isZero256(prefix + n*4)) {
             if (tid == 0) {
-                printf("batch_modinv_fermat: prefix[%d] is zero, setting prod=0\n", n);
+                printf("batch_modinv_fermat: all inputs zero or prefix[%d] is zero, setting all inv=0\n", n);
             }
+            for (int i = 0; i < n; ++i) {
+                fieldSetZero(inv + i*4);
+            }
+            return;
         }
+        fieldInvFermat_device(prefix + n*4, prod);
         fieldCopy(prod, tmp);
         for (int i = n-1; i >= 0; --i) {
             if (isZero256(a + i*4)) {
@@ -685,6 +689,10 @@ __device__ void pointAddJacobian(const JacobianPoint &P, const JacobianPoint &Q,
     fieldSub_opt_device(R.z, z2z2, R.z);
     fieldMul_opt_device(R.z, h, R.z);
     R.infinity = false;
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("pointAddJacobian: R1.x=%llx:%llx:%llx:%llx, R2.x=%llx:%llx:%llx:%llx\n",
+               P.x[0], P.x[1], P.x[2], P.x[3], Q.x[0], Q.x[1], Q.x[2], Q.x[3]);
+    }
 }
 
 __device__ void pointAddMixed(const JacobianPoint &P, const unsigned long long Qx[4], const unsigned long long Qy[4], bool Qinf, JacobianPoint &R) {
@@ -756,9 +764,32 @@ __device__ void scalarMulBaseJacobian(const unsigned long long scalar_le[4], uns
     JacobianPoint R1, R2, R;
     pointSetInfinity(R1);
     pointSetInfinity(R2);
+    // Handle small k1 directly
+    if (k1[3] == 0 && k1[2] == 0 && k1[1] == 0 && k1[0] <= 0xFFFFFFFF) {
+        if (isZero256(k1)) {
+            pointSetInfinity(R);
+        } else {
+            pointSetG(R);
+            for (uint64_t i = 0; i < k1[0]; ++i) {
+                pointDoubleJacobian(R, R);
+            }
+        }
+        if (isZero256(k2)) {
+            pointToAffine(R, outX, outY);
+            if (threadIdx.x == 0 && blockIdx.x == 0) {
+                printf("scalarMulBaseJacobian: small k1=%llx, R.infinity=%d\n", k1[0], R.infinity);
+            }
+            return;
+        }
+    }
     int msb1 = find_msb(k1);
     int msb2 = find_msb(k2);
     int msb = max(msb1, msb2);
+    if (msb < 0) {
+        pointSetInfinity(R);
+        pointToAffine(R, outX, outY);
+        return;
+    }
     for (int pos = msb - (msb % PRECOMPUTE_WINDOW); pos >= 0; pos -= PRECOMPUTE_WINDOW) {
         #pragma unroll
         for (int i = 0; i < PRECOMPUTE_WINDOW; ++i) {
@@ -766,7 +797,7 @@ __device__ void scalarMulBaseJacobian(const unsigned long long scalar_le[4], uns
             pointDoubleJacobian(R2, R2);
         }
         uint32_t w1 = get_window(k1, pos);
-        if (w1) {
+        if (w1 && w1 < PRECOMPUTE_SIZE) {
             JacobianPoint P;
             fieldCopy(d_pre_Gx + w1 * 4, P.x);
             fieldCopy(d_pre_Gy + w1 * 4, P.y);
@@ -775,7 +806,7 @@ __device__ void scalarMulBaseJacobian(const unsigned long long scalar_le[4], uns
             pointAddMixed(R1, P.x, P.y, P.infinity, R1);
         }
         uint32_t w2 = get_window(k2, pos);
-        if (w2) {
+        if (w2 && w2 < PRECOMPUTE_SIZE) {
             JacobianPoint P;
             fieldCopy(d_pre_phiGx + w2 * 4, P.x);
             fieldCopy(d_pre_phiGy + w2 * 4, P.y);
