@@ -29,50 +29,14 @@ struct FoundResult {
     unsigned long long Ry_val[4];
 };
 
-// Stub implementations for missing functions (replace with actual CUDAUtils.h, CUDAHash.cuh if needed)
-__device__ unsigned long long warp_reduce_add_ull(unsigned long long val) {
-    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
-        val += __shfl_down_sync(0xFFFFFFFFu, val, offset);
-    }
-    return val;
-}
+// Declarations for functions defined in CUDAUtils.cu
+__device__ unsigned long long warp_reduce_add_ull(unsigned long long val);
+__device__ bool hash160_prefix_equals(const uint8_t h20[20], uint32_t target_prefix);
+__device__ bool hash160_matches_prefix_then_full(const uint8_t h20[20], const uint8_t target[20], uint32_t target_prefix);
+__device__ void sub256_u64_inplace(unsigned long long a[4], unsigned long long b);
+__device__ void inc256_device(unsigned long long a[4], unsigned long long b);
 
-__device__ bool hash160_prefix_equals(const uint8_t h20[20], uint32_t target_prefix) {
-    return *(uint32_t*)h20 == target_prefix;
-}
-
-__device__ bool hash160_matches_prefix_then_full(const uint8_t h20[20], const uint8_t target[20], uint32_t target_prefix) {
-    if (*(uint32_t*)h20 != target_prefix) return false;
-    for (int i = 0; i < 20; ++i) {
-        if (h20[i] != target[i]) return false;
-    }
-    return true;
-}
-
-__device__ void sub256_u64_inplace(unsigned long long a[4], unsigned long long b) {
-    unsigned long long borrow = 0, temp;
-    USUBO(temp, a[0], b);
-    a[0] = temp;
-    borrow = (temp > a[0]) ? 1 : 0;
-    for (int i = 1; i < 4; ++i) {
-        USUBO(temp, a[i], borrow);
-        a[i] = temp;
-        borrow = (temp > a[i]) ? 1 : 0;
-    }
-}
-
-__device__ void inc256_device(unsigned long long a[4], unsigned long long b) {
-    unsigned long long carry = 0, temp;
-    UADDO(temp, a[0], b);
-    a[0] = temp;
-    carry = (temp < a[0]) ? 1 : 0;
-    for (int i = 1; i < 4; ++i) {
-        UADDO(temp, a[i], carry);
-        a[i] = temp;
-        carry = (temp < a[i]) ? 1 : 0;
-    }
-}
-
+// Stub implementations for other missing functions (replace with actual CUDAUtils.h, CUDAHash.cuh if needed)
 __host__ bool hexToLE64(const std::string& hex, unsigned long long out[4]) {
     if (hex.length() > 64) return false;
     std::string padded = std::string(64 - hex.length(), '0') + hex;
