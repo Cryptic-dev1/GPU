@@ -35,56 +35,11 @@ __device__ bool hash160_prefix_equals(const uint8_t h20[20], uint32_t target_pre
 __device__ bool hash160_matches_prefix_then_full(const uint8_t h20[20], const uint8_t target[20], uint32_t target_prefix);
 __device__ void sub256_u64_inplace(unsigned long long a[4], unsigned long long b);
 __device__ void inc256_device(unsigned long long a[4], unsigned long long b);
-
-// Stub implementations for other missing functions (replace with actual CUDAUtils.h, CUDAHash.cuh if needed)
-__host__ bool hexToLE64(const std::string& hex, unsigned long long out[4]) {
-    if (hex.length() > 64) return false;
-    std::string padded = std::string(64 - hex.length(), '0') + hex;
-    for (int i = 0; i < 4; ++i) {
-        std::string limb = padded.substr((3 - i) * 16, 16);
-        try {
-            out[i] = std::stoull(limb, nullptr, 16);
-        } catch (...) {
-            return false;
-        }
-    }
-    return true;
-}
-
-__host__ void sub256(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
-    unsigned long long borrow = 0, temp;
-    for (int i = 0; i < 4; ++i) {
-        temp = a[i] - b[i] - borrow;
-        out[i] = temp;
-        borrow = (temp > a[i] || (temp == a[i] && b[i] != 0)) ? 1 : 0;
-    }
-}
-
-__host__ void add256_u64(const unsigned long long a[4], unsigned long long b, unsigned long long out[4]) {
-    unsigned long long carry = 0, temp;
-    temp = a[0] + b;
-    out[0] = temp;
-    carry = (temp < a[0]) ? 1 : 0;
-    for (int i = 1; i < 4; ++i) {
-        temp = a[i] + carry;
-        out[i] = temp;
-        carry = (temp < a[i]) ? 1 : 0;
-    }
-}
-
-__host__ bool decode_p2pkh_address(const std::string& address, uint8_t hash160[20]) {
-    // Stub: Assumes base58check decoding and extracts 20-byte hash160
-    std::memset(hash160, 0, 20);
-    return true; // Return true for compilation
-}
-
-__host__ long double ld_from_u256(const unsigned long long a[4]) {
-    long double result = 0.0L;
-    for (int i = 3; i >= 0; --i) {
-        result = result * 18446744073709551616.0L + (long double)a[i];
-    }
-    return result;
-}
+__host__ bool hexToLE64(const std::string& hex, unsigned long long out[4]);
+__host__ void sub256(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]);
+__host__ void add256_u64(const unsigned long long a[4], unsigned long long b, unsigned long long out[4]);
+__host__ bool decode_p2pkh_address(const std::string& address, uint8_t hash160[20]);
+__host__ long double ld_from_u256(const unsigned long long a[4]);
 
 // Declaration for getHash160_33_from_limbs (assumed defined in CUDAHash.cu)
 __device__ void getHash160_33_from_limbs(uint8_t prefix, const unsigned long long x[4], uint8_t h20[20]);
