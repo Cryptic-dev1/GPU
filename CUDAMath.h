@@ -454,6 +454,10 @@ __device__ void batch_modinv_fermat(const unsigned long long* a, unsigned long l
 __device__ void div512_256(const unsigned long long num[8], const unsigned long long den[4], unsigned long long quot[4], unsigned long long rem[4]) {
     unsigned long long dividend[8], shifted_den[8], q[4] = {0};
     fieldCopy(num, dividend);
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("div512_256: num=%llx:%llx:%llx:%llx:%llx:%llx:%llx:%llx\n",
+               num[0], num[1], num[2], num[3], num[4], num[5], num[6], num[7]);
+    }
     for (int bit = 255; bit >= 0; --bit) {
         lsl256(q, q, 1);
         lsl512(den, bit, shifted_den);
@@ -461,6 +465,11 @@ __device__ void div512_256(const unsigned long long num[8], const unsigned long 
             sub512(dividend, shifted_den, dividend);
             q[0] |= 1ULL;
         }
+    }
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("div512_256: dividend=%llx:%llx:%llx:%llx:%llx:%llx:%llx:%llx, q=%llx:%llx:%llx:%llx\n",
+               dividend[0], dividend[1], dividend[2], dividend[3], dividend[4], dividend[5], dividend[6], dividend[7],
+               q[0], q[1], q[2], q[3]);
     }
     fieldCopy(q, quot);
     fieldCopy(dividend, rem);
@@ -473,10 +482,18 @@ __device__ void split_glv(const unsigned long long scalar[4], unsigned long long
     lsr256(half_n, half_n, 1);
     // q1 = round(b2 * scalar / n)
     fieldMul_opt_device(c_b2, scalar, num);
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("split_glv: b2*scalar=%llx:%llx:%llx:%llx:%llx:%llx:%llx:%llx\n",
+               num[0], num[1], num[2], num[3], num[4], num[5], num[6], num[7]);
+    }
     fieldAdd_opt_device(num, half_n, num);
     div512_256(num, c_n, q1, rem);
     // q2 = round(b1 * scalar / n)
     fieldMul_opt_device(c_b1, scalar, num);
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("split_glv: b1*scalar=%llx:%llx:%llx:%llx:%llx:%llx:%llx:%llx\n",
+               num[0], num[1], num[2], num[3], num[4], num[5], num[6], num[7]);
+    }
     fieldAdd_opt_device(num, half_n, num);
     div512_256(num, c_n, q2, rem);
     if (threadIdx.x == 0 && blockIdx.x == 0) {
