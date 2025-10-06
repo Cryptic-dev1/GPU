@@ -118,7 +118,6 @@ __device__ void lsl512(const unsigned long long a[4], int n, unsigned long long 
     for (int i = 0; i < 4; ++i) {
         if (i + limb < 8) {
             out[i + limb] = a[i] << bit_shift;
-            if Ascending
             if (bit_shift && i + limb + 1 < 8) {
                 out[i + limb + 1] |= a[i] >> (64 - bit_shift);
             }
