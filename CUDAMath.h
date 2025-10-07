@@ -1,3 +1,4 @@
+```cpp
 #ifndef CUDA_MATH_H
 #define CUDA_MATH_H
 
@@ -456,13 +457,13 @@ __host__ __device__ void fieldNeg(const unsigned long long a[4], unsigned long l
     }
 #ifdef __CUDA_ARCH__
     fieldSub_opt_device(c_p, a, out);
-#else
-    fieldSub_opt_host(host_c_p, a, out);
-#endif
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         printf("fieldNeg: a=%llx:%llx:%llx:%llx, out=%llx:%llx:%llx:%llx\n",
                a[0], a[1], a[2], a[3], out[0], out[1], out[2], out[3]);
     }
+#else
+    fieldSub_opt_host(host_c_p, a, out);
+#endif
 }
 
 __device__ void batch_modinv_fermat(const unsigned long long* a, unsigned long long* inv, int n) {
@@ -526,7 +527,6 @@ __device__ void batch_modinv_fermat(const unsigned long long* a, unsigned long l
     __syncthreads();
 }
 
-// Division for GLV
 __device__ void div512_256(const unsigned long long num[8], const unsigned long long den[4], unsigned long long quot[4], unsigned long long rem[4]) {
     unsigned long long dividend[8], shifted_den[8], q[4] = {0};
     fieldCopy(num, dividend);
@@ -587,85 +587,17 @@ __device__ void div512_256(const unsigned long long num[8], const unsigned long 
     fieldCopy(dividend, rem);
 }
 
-// GLV Endomorphism
-__device__ void split_glv(const unsigned long long scalar[4], unsigned long long k1[4], unsigned long long k2[4]) {
-    if (isZero256(scalar)) {
-        fieldSetZero(k1);
-        fieldSetZero(k2);
-        if (threadIdx.x == 0 && blockIdx.x == 0) {
-            printf("split_glv: scalar=0:0:0:0, k1=0:0:0:0, k2=0:0:0:0\n");
-        }
-        return;
-    }
-    // Check if scalar < c_n
-    bool scalar_small = true;
-    for (int i = 3; i >= 0; --i) {
-        if (scalar[i] > c_n[i]) { scalar_small = false; break; }
-        if (scalar[i] < c_n[i]) break;
-    }
-    if (scalar_small) {
-        fieldCopy(scalar, k1);
-        fieldSetZero(k2);
-        if (threadIdx.x == 0 && blockIdx.x == 0) {
-            printf("split_glv: scalar_small, scalar=%llx:%llx:%llx:%llx, k1=%llx:%llx:%llx:%llx, k2=0:0:0:0\n",
-                   scalar[0], scalar[1], scalar[2], scalar[3], k1[0], k1[1], k1[2], k1[3]);
-        }
-        return;
-    }
-    unsigned long long num[8], half_n[4], q1[4], q2[4], tmp1[4], tmp2[4], rem[4];
-    fieldCopy(c_n, half_n);
-    lsr256(half_n, half_n, 1);
-    // q1 = round(b2 * scalar / n)
-    fieldMul_opt_device(c_b2, scalar, num);
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("split_glv: b2*scalar=%llx:%llx:%llx:%llx:%llx:%llx:%llx:%llx\n",
-               num[0], num[1], num[2], num[3], num[4], num[5], num[6], num[7]);
-    }
-    fieldAdd_opt_device(num, half_n, num);
-    div512_256(num, c_n, q1, rem);
-    // q2 = round(b1 * scalar / n)
-    fieldMul_opt_device(c_b1, scalar, num);
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("split_glv: b1*scalar=%llx:%llx:%llx:%llx:%llx:%llx:%llx:%llx\n",
-               num[0], num[1], num[2], num[3], num[4], num[5], num[6], num[7]);
-    }
-    fieldAdd_opt_device(num, half_n, num);
-    div512_256(num, c_n, q2, rem);
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("split_glv: q1=%llx:%llx:%llx:%llx, q2=%llx:%llx:%llx:%llx\n",
-               q1[0], q1[1], q1[2], q1[3], q2[0], q2[1], q2[2], q2[3]);
-    }
-    // k1 = scalar - q1 * a1 - q2 * a2
-    fieldMul_opt_device(q1, c_a1, tmp1);
-    fieldMul_opt_device(q2, c_a2, tmp2);
-    fieldAdd_opt_device(tmp1, tmp2, tmp1);
-    fieldSub_opt_device(scalar, tmp1, k1);
-    if (_IsNegative(k1)) {
-        fieldAdd_opt_device(k1, c_n, k1);
-    }
-    // k2 = q1 * b1 - q2 * b2
-    fieldMul_opt_device(q1, c_b1, tmp1);
-    fieldMul_opt_device(q2, c_b2, tmp2);
-    fieldSub_opt_device(tmp1, tmp2, k2);
-    if (_IsNegative(k2)) {
-        fieldAdd_opt_device(k2, c_n, k2);
-    }
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("split_glv: k1=%llx:%llx:%llx:%llx, k2=%llx:%llx:%llx:%llx\n",
-               k1[0], k1[1], k1[2], k1[3], k2[0], k2[1], k2[2], k2[3]);
-    }
-}
-
-// Jacobian Point Operations
 __host__ __device__ void pointSetInfinity(JacobianPoint &P) {
     fieldSetZero(P.x);
     fieldSetZero(P.y);
     fieldSetZero(P.z);
     P.infinity = true;
+#ifdef __CUDA_ARCH__
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         printf("pointSetInfinity: P.x=%llx:%llx:%llx:%llx, P.y=%llx:%llx:%llx:%llx, P.z=%llx:%llx:%llx:%llx, P.infinity=%d\n",
                P.x[0], P.x[1], P.x[2], P.x[3], P.y[0], P.y[1], P.y[2], P.y[3], P.z[0], P.z[1], P.z[2], P.z[3], P.infinity);
     }
+#endif
 }
 
 __device__ void pointSetG(JacobianPoint &P) {
@@ -1034,7 +966,7 @@ __device__ void scalarMulBaseJacobian(const unsigned long long scalar_le[4], uns
 }
 
 __host__ __device__ bool ge256(const unsigned long long a[4], const unsigned long long b[4]) {
-        for (int i = 3; i >= 0; --i) {
+    for (int i = 3; i >= 0; --i) {
         if (a[i] > b[i]) return true;
         if (a[i] < b[i]) return false;
     }
