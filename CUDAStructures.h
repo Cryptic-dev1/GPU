@@ -5,7 +5,7 @@
 #define FOUND_NONE  0
 #define FOUND_LOCK  1
 #define FOUND_READY 2
-#define MAX_BATCH_SIZE 512 // Reduced from 1024
+#define MAX_BATCH_SIZE 1024
 
 struct JacobianPoint {
     unsigned long long x[4];
@@ -24,8 +24,8 @@ __device__ __constant__ unsigned long long Gy_d[4] = {
     0x9c47d08ffb10d4b8ULL, 0xfd17b448a6855419ULL, 0x5da4fbfc0e1108a8ULL, 0x483ada7726a3c465ULL
 };
 
-// Precomputed tables (2^8 = 256 points, ~2 MB total)
-#define PRECOMPUTE_WINDOW 8 // Reduced from 16
+// Precomputed tables (2^16 = 65,536 points, ~256 MB total)
+#define PRECOMPUTE_WINDOW 16
 #define PRECOMPUTE_SIZE (1LL << PRECOMPUTE_WINDOW)
 
 // Batch point tables for fused_ec_hash
