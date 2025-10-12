@@ -405,12 +405,40 @@ __global__ void validate_point_kernel(const unsigned long long* x, const unsigne
     }
 }
 
-__global__ void validate_precompute_kernel(const unsigned long long* pre_x, const unsigned long long* pre_y, unsigned long long size, int* valid, unsigned long long* debug_invalid_idx) {
+__global__ void validate_precompute_kernel(const unsigned long long* pre_x, const unsigned long long* pre_y, unsigned long long size, int* valid, unsigned long long* debug_invalid_idx, unsigned long long* debug_invalid_point) {
     unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
     if (!isPointOnCurve_device(pre_x + idx * 4, pre_y + idx * 4)) {
         atomicAnd(valid, 0);
-        atomicMin(debug_invalid_idx, idx);
+        if (atomicMin(debug_invalid_idx, idx) == idx) {
+            fieldCopy(pre_x + idx * 4, debug_invalid_point);
+            fieldCopy(pre_y + idx * 4, debug_invalid_point + 4);
+        }
+    }
+}
+
+__global__ void debug_field_arithmetic_kernel(unsigned long long* result, int* valid) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        unsigned long long x[4] = {0x16f81798ULL, 0x59f2815bULL, 0x2dce28d9ULL, 0x029bfcdbULL}; // Gx_d lower 256 bits
+        unsigned long long y[4] = {0xfb10d4b8ULL, 0x9c47d08fULL, 0xa6855419ULL, 0x483ada77ULL}; // Gy_d
+        unsigned long long y2[8], x3[8], seven[4] = {7ULL, 0ULL, 0ULL, 0ULL}, temp[8], result_y2[4], x3_plus_7[4];
+        fieldSqr_opt_device(y, y2);
+        modred_barrett_opt_device(y2, result_y2); // y^2 mod p
+        fieldSqr_opt_device(x, temp);
+        fieldMul_opt_device(temp, x, x3); // x^3
+        modred_barrett_opt_device(x3, x3_plus_7);
+        fieldAdd_opt_device(x3_plus_7, seven, x3_plus_7); // x^3 + 7 mod p
+        *valid = _IsEqual(result_y2, x3_plus_7);
+        fieldCopy(result_y2, result);
+        fieldCopy(x3_plus_7, result + 4);
+    }
+}
+
+__global__ void debug_field_multiply_kernel(unsigned long long* result) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        unsigned long long temp[8];
+        fieldMul_opt_device(Gx_d, c_beta_fallback, temp);
+        modred_barrett_opt_device(temp, result);
     }
 }
 
@@ -446,17 +474,16 @@ __global__ void compute_phi_base_kernel(unsigned long long* phi_x, unsigned long
 __global__ void precompute_table_kernel(JacobianPoint base, unsigned long long* pre_x, unsigned long long* pre_y, unsigned long long size) {
     unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
-    JacobianPoint P = base;
-    if (idx == 0) {
-        fieldCopy(base.x, pre_x);
-        fieldCopy(base.y, pre_y);
-    } else {
-        for (unsigned long long i = 0; i < idx; ++i) {
-            pointAddJacobian(P, base, P);
-        }
-        fieldCopy(P.x, pre_x + idx * 4);
-        fieldCopy(P.y, pre_y + idx * 4);
+    JacobianPoint P;
+    fieldCopy(base.x, P.x);
+    fieldCopy(base.y, P.y);
+    fieldCopy(base.z, P.z);
+    P.infinity = base.infinity;
+    for (unsigned long long i = 0; i < idx; ++i) {
+        pointAddJacobian(P, base, P);
     }
+    fieldCopy(P.x, pre_x + idx * 4);
+    fieldCopy(P.y, pre_y + idx * 4);
 }
 
 #endif // CUDA_MATH_H

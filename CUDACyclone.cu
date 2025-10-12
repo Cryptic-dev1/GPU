@@ -267,13 +267,22 @@ int main(int argc, char* argv[]) {
         std::cerr << "Warning: c_beta in CUDAStructures.h is incorrect, using c_beta_fallback\n";
     }
 
+    // Validate base point on host
+    if (verbose) {
+        std::cout << "Validating base point on host...\n";
+    }
+    if (!isPointOnCurve(h_Gx_d, h_Gy_d)) {
+        std::cerr << "Error: base point (Gx_d, Gy_d) is not on the secp256k1 curve\n";
+        return EXIT_FAILURE;
+    }
+
     // Allocate memory
     unsigned long long *d_start_scalars, *d_counts256, *d_P, *d_R, *d_pre_Gx_local, *d_pre_Gy_local, *d_pre_phiGx_local, *d_pre_phiGy_local;
     int *d_found_flag, *d_valid;
     FoundResult *d_found_result;
     unsigned long long *d_hashes_accum;
     unsigned int *d_any_left;
-    unsigned long long *d_debug_precompute, *d_debug_invalid_idx;
+    unsigned long long *d_debug_precompute, *d_debug_invalid_idx, *d_debug_invalid_point, *d_debug_field_result;
     CUDA_CHECK(cudaMalloc(&d_start_scalars, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_counts256, sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_P, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
@@ -289,6 +298,8 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMalloc(&d_debug_precompute, PRECOMPUTE_SIZE_LOCAL * 8 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_valid, sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_debug_invalid_idx, sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_debug_invalid_point, 8 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_debug_field_result, 4 * sizeof(unsigned long long)));
 
     // Initialize memory
     CUDA_CHECK(cudaMemset(d_counts256, 0, sizeof(unsigned long long)));
@@ -304,10 +315,25 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemset(d_debug_precompute, 0, PRECOMPUTE_SIZE_LOCAL * 8 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemset(d_valid, 1, sizeof(int)));
     CUDA_CHECK(cudaMemset(d_debug_invalid_idx, 0xFF, sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_debug_invalid_point, 0, 8 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_debug_field_result, 0, 4 * sizeof(unsigned long long)));
 
     // Set constants
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_hash160, target_hash160, 20 * sizeof(uint8_t)));
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_prefix, &target_prefix, sizeof(uint32_t)));
+
+    // Validate field arithmetic for phi_base
+    if (verbose) {
+        std::cout << "Validating field multiplication for phi_base on device...\n";
+    }
+    debug_field_multiply_kernel<<<1, 1>>>(d_debug_field_result);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    unsigned long long h_field_result[4];
+    CUDA_CHECK(cudaMemcpy(h_field_result, d_debug_field_result, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    if (verbose) {
+        std::cout << "phi_x (Gx_d * c_beta_fallback mod p): " << CryptoUtils::formatHex256(h_field_result) << "\n";
+    }
 
     // Precompute G tables
     JacobianPoint base;
@@ -339,6 +365,8 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_debug_precompute));
         CUDA_CHECK(cudaFree(d_valid));
         CUDA_CHECK(cudaFree(d_debug_invalid_idx));
+        CUDA_CHECK(cudaFree(d_debug_invalid_point));
+        CUDA_CHECK(cudaFree(d_debug_field_result));
         return EXIT_FAILURE;
     }
     int precompute_blocks = (PRECOMPUTE_SIZE_LOCAL + threadsPerBlock - 1) / threadsPerBlock;
@@ -352,15 +380,20 @@ int main(int argc, char* argv[]) {
     }
     CUDA_CHECK(cudaMemset(d_valid, 1, sizeof(int)));
     CUDA_CHECK(cudaMemset(d_debug_invalid_idx, 0xFF, sizeof(unsigned long long)));
-    validate_precompute_kernel<<<precompute_blocks, threadsPerBlock>>>(d_pre_Gx_local, d_pre_Gy_local, PRECOMPUTE_SIZE_LOCAL, d_valid, d_debug_invalid_idx);
+    CUDA_CHECK(cudaMemset(d_debug_invalid_point, 0, 8 * sizeof(unsigned long long)));
+    validate_precompute_kernel<<<precompute_blocks, threadsPerBlock>>>(d_pre_Gx_local, d_pre_Gy_local, PRECOMPUTE_SIZE_LOCAL, d_valid, d_debug_invalid_idx, d_debug_invalid_point);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
     int h_valid;
     unsigned long long h_invalid_idx;
+    unsigned long long h_invalid_point[8];
     CUDA_CHECK(cudaMemcpy(&h_valid, d_valid, sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(&h_invalid_idx, d_debug_invalid_idx, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_invalid_point, d_debug_invalid_point, 8 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
     if (!h_valid) {
         std::cerr << "Error: precomputed G tables contain invalid points at index " << h_invalid_idx << "\n";
+        std::cerr << "Invalid point x: " << CryptoUtils::formatHex256(h_invalid_point) << "\n";
+        std::cerr << "Invalid point y: " << CryptoUtils::formatHex256(h_invalid_point + 4) << "\n";
         CUDA_CHECK(cudaFree(d_start_scalars));
         CUDA_CHECK(cudaFree(d_counts256));
         CUDA_CHECK(cudaFree(d_P));
@@ -376,6 +409,8 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_debug_precompute));
         CUDA_CHECK(cudaFree(d_valid));
         CUDA_CHECK(cudaFree(d_debug_invalid_idx));
+        CUDA_CHECK(cudaFree(d_debug_invalid_point));
+        CUDA_CHECK(cudaFree(d_debug_field_result));
         return EXIT_FAILURE;
     }
 
@@ -405,6 +440,8 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_debug_precompute));
         CUDA_CHECK(cudaFree(d_valid));
         CUDA_CHECK(cudaFree(d_debug_invalid_idx));
+        CUDA_CHECK(cudaFree(d_debug_invalid_point));
+        CUDA_CHECK(cudaFree(d_debug_field_result));
         return EXIT_FAILURE;
     }
 
@@ -471,6 +508,8 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_debug_precompute));
         CUDA_CHECK(cudaFree(d_valid));
         CUDA_CHECK(cudaFree(d_debug_invalid_idx));
+        CUDA_CHECK(cudaFree(d_debug_invalid_point));
+        CUDA_CHECK(cudaFree(d_debug_field_result));
         return EXIT_FAILURE;
     }
 
@@ -497,6 +536,8 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_debug_precompute));
         CUDA_CHECK(cudaFree(d_valid));
         CUDA_CHECK(cudaFree(d_debug_invalid_idx));
+        CUDA_CHECK(cudaFree(d_debug_invalid_point));
+        CUDA_CHECK(cudaFree(d_debug_field_result));
         return EXIT_FAILURE;
     }
 
@@ -532,6 +573,8 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_debug_precompute));
         CUDA_CHECK(cudaFree(d_valid));
         CUDA_CHECK(cudaFree(d_debug_invalid_idx));
+        CUDA_CHECK(cudaFree(d_debug_invalid_point));
+        CUDA_CHECK(cudaFree(d_debug_field_result));
         return EXIT_FAILURE;
     }
     // Debug: Test write to d_pre_phiGx_local and d_pre_phiGy_local
@@ -554,13 +597,17 @@ int main(int argc, char* argv[]) {
     }
     CUDA_CHECK(cudaMemset(d_valid, 1, sizeof(int)));
     CUDA_CHECK(cudaMemset(d_debug_invalid_idx, 0xFF, sizeof(unsigned long long)));
-    validate_precompute_kernel<<<precompute_blocks, threadsPerBlock>>>(d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE_LOCAL, d_valid, d_debug_invalid_idx);
+    CUDA_CHECK(cudaMemset(d_debug_invalid_point, 0, 8 * sizeof(unsigned long long)));
+    validate_precompute_kernel<<<precompute_blocks, threadsPerBlock>>>(d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE_LOCAL, d_valid, d_debug_invalid_idx, d_debug_invalid_point);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
     CUDA_CHECK(cudaMemcpy(&h_valid, d_valid, sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(&h_invalid_idx, d_debug_invalid_idx, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_invalid_point, d_debug_invalid_point, 8 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
     if (!h_valid) {
         std::cerr << "Error: precomputed phi(G) tables contain invalid points at index " << h_invalid_idx << "\n";
+        std::cerr << "Invalid point x: " << CryptoUtils::formatHex256(h_invalid_point) << "\n";
+        std::cerr << "Invalid point y: " << CryptoUtils::formatHex256(h_invalid_point + 4) << "\n";
         CUDA_CHECK(cudaFree(d_phi_x));
         CUDA_CHECK(cudaFree(d_phi_y));
         CUDA_CHECK(cudaFree(d_start_scalars));
@@ -578,6 +625,8 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_debug_precompute));
         CUDA_CHECK(cudaFree(d_valid));
         CUDA_CHECK(cudaFree(d_debug_invalid_idx));
+        CUDA_CHECK(cudaFree(d_debug_invalid_point));
+        CUDA_CHECK(cudaFree(d_debug_field_result));
         return EXIT_FAILURE;
     }
 
@@ -614,6 +663,8 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_debug_precompute));
         CUDA_CHECK(cudaFree(d_valid));
         CUDA_CHECK(cudaFree(d_debug_invalid_idx));
+        CUDA_CHECK(cudaFree(d_debug_invalid_point));
+        CUDA_CHECK(cudaFree(d_debug_field_result));
         return EXIT_FAILURE;
     }
 
@@ -622,6 +673,8 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(d_debug_precompute));
     CUDA_CHECK(cudaFree(d_valid));
     CUDA_CHECK(cudaFree(d_debug_invalid_idx));
+    CUDA_CHECK(cudaFree(d_debug_invalid_point));
+    CUDA_CHECK(cudaFree(d_debug_field_result));
 
     // Initialize scalars
     unsigned long long *h_start_scalars;
