@@ -239,6 +239,10 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemset(d_any_left, 0, sizeof(unsigned int)));
     CUDA_CHECK(cudaMemset(d_P, 0, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemset(d_R, 0, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_pre_Gx_local, 0, PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_pre_Gy_local, 0, PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_pre_phiGx_local, 0, PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_pre_phiGy_local, 0, PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long)));
 
     // Set constants
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_hash160, target_hash160, 20 * sizeof(uint8_t)));
@@ -259,7 +263,8 @@ int main(int argc, char* argv[]) {
     fieldSetZero(base.z);
     base.z[0] = 1ULL;
     base.infinity = false;
-    precompute_table_kernel<<<(PRECOMPUTE_SIZE + threadsPerBlock - 1) / threadsPerBlock, threadsPerBlock>>>(base, d_pre_Gx_local, d_pre_Gy_local, PRECOMPUTE_SIZE);
+    dim3 grid((PRECOMPUTE_SIZE + threadsPerBlock - 1) / threadsPerBlock);
+    precompute_table_kernel<<<grid, threadsPerBlock>>>(base, d_pre_Gx_local, d_pre_Gy_local, PRECOMPUTE_SIZE);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -269,7 +274,7 @@ int main(int argc, char* argv[]) {
     fieldSetZero(phi_base.z);
     phi_base.z[0] = 1ULL;
     phi_base.infinity = false;
-    precompute_table_kernel<<<(PRECOMPUTE_SIZE + threadsPerBlock - 1) / threadsPerBlock, threadsPerBlock>>>(phi_base, d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE);
+    precompute_table_kernel<<<grid, threadsPerBlock>>>(phi_base, d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 

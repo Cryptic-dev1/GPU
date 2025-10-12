@@ -248,7 +248,6 @@ __device__ void scalarMulBaseJacobian(const unsigned long long scalar[4], unsign
         pointDoubleJacobian(R, R);
         if ((scalar[i/64] >> (i % 64)) & 1ULL) {
             JacobianPoint P;
-            if (i >= PRECOMPUTE_SIZE) return; // Bounds check
             fieldCopy(pre_Gx + (i * 4), P.x);
             fieldCopy(pre_Gy + (i * 4), P.y);
             fieldSetZero(P.z);
@@ -297,15 +296,17 @@ __global__ void precompute_table_kernel(JacobianPoint base, unsigned long long* 
     unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
     JacobianPoint P = base;
-    for (unsigned long long bit = 0; bit < idx; ++bit) {
+    for (unsigned long long bit = 0; bit < idx && bit < size; ++bit) {
         if (bit % 2 == 0) {
             pointDoubleJacobian(P, P);
         } else {
             pointAddJacobian(P, base, P);
         }
     }
-    fieldCopy(P.x, pre_x + idx * 4);
-    fieldCopy(P.y, pre_y + idx * 4);
+    if (idx < size) {
+        fieldCopy(P.x, pre_x + idx * 4);
+        fieldCopy(P.y, pre_y + idx * 4);
+    }
 }
 
 #endif // CUDA_MATH_H
