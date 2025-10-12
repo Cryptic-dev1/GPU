@@ -113,6 +113,13 @@ __global__ void compute_phi_base_kernel(unsigned long long* phi_x, unsigned long
     }
 }
 
+__global__ void debug_precompute_verify_kernel(unsigned long long* pre_x, unsigned long long* pre_y, unsigned long long* debug_out, unsigned long long size) {
+    unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    fieldCopy(pre_x + idx * 4, debug_out + idx * 8);
+    fieldCopy(pre_y + idx * 4, debug_out + idx * 8 + 4);
+}
+
 __global__ void searchKernel(
     const unsigned long long* scalars_in,
     unsigned long long* outX,
@@ -138,7 +145,8 @@ __global__ void searchKernel(
     unsigned long long Rx[4], Ry[4];
     uint8_t hash[20];
 
-    for (int iter = 0; iter < 1000; ++iter) {
+    // Limit iterations for debugging
+    for (int iter = 0; iter < 1; ++iter) {
         if (warp_found_ready(found_flag, full_mask, lane)) return;
 
         scalarMulBaseJacobian(scalar, Rx, Ry, pre_Gx, pre_Gy, pre_phiGx, pre_phiGy);
@@ -283,6 +291,7 @@ int main(int argc, char* argv[]) {
     FoundResult *d_found_result;
     unsigned long long *d_hashes_accum;
     unsigned int *d_any_left;
+    unsigned long long *d_debug_precompute;
     CUDA_CHECK(cudaMalloc(&d_start_scalars, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_counts256, sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_P, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
@@ -295,6 +304,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMalloc(&d_pre_Gy_local, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_pre_phiGx_local, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_pre_phiGy_local, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_debug_precompute, PRECOMPUTE_SIZE_LOCAL * 8 * sizeof(unsigned long long)));
 
     // Initialize memory
     CUDA_CHECK(cudaMemset(d_counts256, 0, sizeof(unsigned long long)));
@@ -307,6 +317,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemset(d_pre_Gy_local, 0, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemset(d_pre_phiGx_local, 0, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemset(d_pre_phiGy_local, 0, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_debug_precompute, 0, PRECOMPUTE_SIZE_LOCAL * 8 * sizeof(unsigned long long)));
 
     // Set constants
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_hash160, target_hash160, 20 * sizeof(uint8_t)));
@@ -359,6 +370,28 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_pre_Gy_local));
         CUDA_CHECK(cudaFree(d_pre_phiGx_local));
         CUDA_CHECK(cudaFree(d_pre_phiGy_local));
+        CUDA_CHECK(cudaFree(d_debug_precompute));
+        return EXIT_FAILURE;
+    }
+
+    // Validate phi_base point
+    if (!isPointOnCurve(h_phi_x, h_phi_y)) {
+        std::cerr << "Error: phi_base point is not on the secp256k1 curve\n";
+        CUDA_CHECK(cudaFree(d_phi_x));
+        CUDA_CHECK(cudaFree(d_phi_y));
+        CUDA_CHECK(cudaFree(d_start_scalars));
+        CUDA_CHECK(cudaFree(d_counts256));
+        CUDA_CHECK(cudaFree(d_P));
+        CUDA_CHECK(cudaFree(d_R));
+        CUDA_CHECK(cudaFree(d_found_flag));
+        CUDA_CHECK(cudaFree(d_found_result));
+        CUDA_CHECK(cudaFree(d_hashes_accum));
+        CUDA_CHECK(cudaFree(d_any_left));
+        CUDA_CHECK(cudaFree(d_pre_Gx_local));
+        CUDA_CHECK(cudaFree(d_pre_Gy_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGx_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGy_local));
+        CUDA_CHECK(cudaFree(d_debug_precompute));
         return EXIT_FAILURE;
     }
 
@@ -391,6 +424,7 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_pre_Gy_local));
         CUDA_CHECK(cudaFree(d_pre_phiGx_local));
         CUDA_CHECK(cudaFree(d_pre_phiGy_local));
+        CUDA_CHECK(cudaFree(d_debug_precompute));
         return EXIT_FAILURE;
     }
     int precompute_blocks = (PRECOMPUTE_SIZE_LOCAL + threadsPerBlock - 1) / threadsPerBlock;
@@ -435,6 +469,7 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_pre_Gy_local));
         CUDA_CHECK(cudaFree(d_pre_phiGx_local));
         CUDA_CHECK(cudaFree(d_pre_phiGy_local));
+        CUDA_CHECK(cudaFree(d_debug_precompute));
         return EXIT_FAILURE;
     }
     // Debug: Test write to d_pre_phiGx_local and d_pre_phiGy_local
@@ -451,8 +486,23 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
+    // Debug: Verify precomputed phi tables
+    if (verbose) {
+        std::cout << "Verifying precomputed phi tables...\n";
+    }
+    debug_precompute_verify_kernel<<<precompute_blocks, threadsPerBlock>>>(d_pre_phiGx_local, d_pre_phiGy_local, d_debug_precompute, PRECOMPUTE_SIZE_LOCAL);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    unsigned long long h_debug_precompute[8];
+    CUDA_CHECK(cudaMemcpy(h_debug_precompute, d_debug_precompute, 8 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    if (verbose) {
+        std::cout << "First precomputed phi_Gx: " << CryptoUtils::formatHex256(h_debug_precompute) << "\n";
+        std::cout << "First precomputed phi_Gy: " << CryptoUtils::formatHex256(h_debug_precompute + 4) << "\n";
+    }
+
     CUDA_CHECK(cudaFree(d_phi_x));
     CUDA_CHECK(cudaFree(d_phi_y));
+    CUDA_CHECK(cudaFree(d_debug_precompute));
 
     // Initialize scalars
     unsigned long long *h_start_scalars;
@@ -480,7 +530,7 @@ int main(int argc, char* argv[]) {
                                                                  d_counts256, d_found_flag, d_found_result, d_hashes_accum,
                                                                  d_any_left, d_pre_Gx_local, d_pre_Gy_local, d_pre_phiGx_local, d_pre_phiGy_local);
         CUDA_CHECK(cudaGetLastError());
-        //CUDA_CHECK(cudaStreamSynchronize(streamKernel));
+        CUDA_CHECK(cudaStreamSynchronize(streamKernel));
 
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration<double>(now - tLast).count() >= 0.5) {
@@ -577,6 +627,6 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(d_pre_phiGy_local));
     CUDA_CHECK(cudaFreeHost(h_start_scalars));
     CUDA_CHECK(cudaStreamDestroy(streamKernel));
-
+    
     return exit_code;
 }

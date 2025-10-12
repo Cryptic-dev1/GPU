@@ -148,6 +148,10 @@ __device__ void fieldSqr_opt_device(const unsigned long long a[4], unsigned long
 }
 
 __device__ void fieldInv_opt_device(const unsigned long long a[4], unsigned long long out[4]) {
+    if (isZero256(a)) {
+        fieldSetZero(out);
+        return;
+    }
     unsigned long long t[4], r[4];
     fieldCopy(a, t);
     fieldSetZero(r);
@@ -211,7 +215,7 @@ __device__ void pointAddJacobian(const JacobianPoint &P, const JacobianPoint &Q,
     if (Q.infinity) {
         fieldCopy(P.x, R.x);
         fieldCopy(P.y, R.y);
-        fieldCopy(P.z, R.z);
+        fieldCopy(Q.z, R.z);
         R.infinity = P.infinity;
         return;
     }
@@ -225,6 +229,16 @@ __device__ void pointAddJacobian(const JacobianPoint &P, const JacobianPoint &Q,
     fieldMul_opt_device(Q.x, t5, t1);
     modred_barrett_opt_device(t1, t3); // t3 = Q.x*P.z^2
     fieldSub_opt_device(t4, t3, t4); // t4 = P.x*Q.z^2 - Q.x*P.z^2
+    if (isZero256(t4)) {
+        // Points are equal or inverses
+        if (_IsEqual(P.y, Q.y)) {
+            pointDoubleJacobian(P, R);
+            return;
+        } else {
+            R.infinity = true;
+            return;
+        }
+    }
     fieldMul_opt_device(Q.z, t4, t1);
     modred_barrett_opt_device(t1, R.z); // R.z = Q.z*(P.x*Q.z^2 - Q.x*P.z^2)
     fieldMul_opt_device(P.z, t4, t1);
@@ -290,6 +304,18 @@ __host__ __device__ bool ge256(const unsigned long long a[4], const unsigned lon
 __host__ __device__ bool ge256_u64(const unsigned long long a[4], unsigned long long b) {
     if (a[3] != 0 || a[2] != 0 || a[1] != 0) return true;
     return a[0] >= b;
+}
+
+// Curve validation function (y^2 = x^3 + 7 mod p)
+__host__ bool isPointOnCurve(const unsigned long long x[4], const unsigned long long y[4]) {
+    unsigned long long y2[8], x3[8], seven[4] = {7ULL, 0ULL, 0ULL, 0ULL}, temp[8], result[4], x3_plus_7[4];
+    fieldSqr_opt_device(y, y2);
+    modred_barrett_opt_device(y2, result); // y^2 mod p
+    fieldSqr_opt_device(x, temp);
+    fieldMul_opt_device(temp, x, x3); // x^3
+    modred_barrett_opt_device(x3, x3_plus_7);
+    fieldAdd_opt_device(x3_plus_7, seven, x3_plus_7); // x^3 + 7 mod p
+    return _IsEqual(result, x3_plus_7);
 }
 
 __global__ void scalarMulKernelBase(const unsigned long long* scalars_in, unsigned long long* outX, unsigned long long* outY, int N, unsigned long long* d_pre_Gx, unsigned long long* d_pre_Gy, unsigned long long* d_pre_phiGx, unsigned long long* d_pre_phiGy) {
