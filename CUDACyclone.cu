@@ -113,13 +113,6 @@ __global__ void compute_phi_base_kernel(unsigned long long* phi_x, unsigned long
     }
 }
 
-__global__ void debug_precompute_verify_kernel(unsigned long long* pre_x, unsigned long long* pre_y, unsigned long long* debug_out, unsigned long long size) {
-    unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= size) return;
-    fieldCopy(pre_x + idx * 4, debug_out + idx * 8);
-    fieldCopy(pre_y + idx * 4, debug_out + idx * 8 + 4);
-}
-
 __global__ void searchKernel(
     const unsigned long long* scalars_in,
     unsigned long long* outX,
@@ -627,6 +620,6 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(d_pre_phiGy_local));
     CUDA_CHECK(cudaFreeHost(h_start_scalars));
     CUDA_CHECK(cudaStreamDestroy(streamKernel));
-    
+
     return exit_code;
 }

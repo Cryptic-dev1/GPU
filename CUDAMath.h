@@ -169,7 +169,7 @@ __device__ void fieldInv_opt_device(const unsigned long long a[4], unsigned long
     fieldCopy(t, out);
 }
 
-__device__ void pointDoubleJacobian(JacobianPoint &P, JacobianPoint &R) {
+__device__ void pointDoubleJacobian(const JacobianPoint &P, JacobianPoint &R) {
     if (P.infinity || isZero256(P.y)) {
         R.infinity = true;
         return;
@@ -215,7 +215,7 @@ __device__ void pointAddJacobian(const JacobianPoint &P, const JacobianPoint &Q,
     if (Q.infinity) {
         fieldCopy(P.x, R.x);
         fieldCopy(P.y, R.y);
-        fieldCopy(Q.z, R.z);
+        fieldCopy(P.z, R.z);
         R.infinity = P.infinity;
         return;
     }
@@ -329,6 +329,13 @@ __global__ void debug_precompute_write_kernel(unsigned long long* pre_x, unsigne
     if (idx >= size) return;
     pre_x[idx * 4] = 0ULL;
     pre_y[idx * 4] = 0ULL;
+}
+
+__global__ void debug_precompute_verify_kernel(unsigned long long* pre_x, unsigned long long* pre_y, unsigned long long* debug_out, unsigned long long size) {
+    unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    fieldCopy(pre_x + idx * 4, debug_out + idx * 8);
+    fieldCopy(pre_y + idx * 4, debug_out + idx * 8 + 4);
 }
 
 __global__ void precompute_table_kernel(JacobianPoint base, unsigned long long* pre_x, unsigned long long* pre_y, unsigned long long size) {
