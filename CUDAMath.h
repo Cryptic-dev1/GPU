@@ -405,12 +405,12 @@ __global__ void validate_point_kernel(const unsigned long long* x, const unsigne
     }
 }
 
-__global__ void validate_precompute_kernel(const unsigned long long* pre_x, const unsigned long long* pre_y, unsigned long long size, int* valid) {
+__global__ void validate_precompute_kernel(const unsigned long long* pre_x, const unsigned long long* pre_y, unsigned long long size, int* valid, unsigned long long* debug_invalid_idx) {
     unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
-    bool is_valid = isPointOnCurve_device(pre_x + idx * 4, pre_y + idx * 4);
-    if (!is_valid) {
+    if (!isPointOnCurve_device(pre_x + idx * 4, pre_y + idx * 4)) {
         atomicAnd(valid, 0);
+        atomicMin(debug_invalid_idx, idx);
     }
 }
 
@@ -447,15 +447,13 @@ __global__ void precompute_table_kernel(JacobianPoint base, unsigned long long* 
     unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
     JacobianPoint P = base;
-    unsigned long long max_bits = min(256ULL, size);
-    for (unsigned long long bit = 0; bit < idx && bit < max_bits; ++bit) {
-        if (bit % 2 == 0) {
-            pointDoubleJacobian(P, P);
-        } else {
+    if (idx == 0) {
+        fieldCopy(base.x, pre_x);
+        fieldCopy(base.y, pre_y);
+    } else {
+        for (unsigned long long i = 0; i < idx; ++i) {
             pointAddJacobian(P, base, P);
         }
-    }
-    if (idx < size) {
         fieldCopy(P.x, pre_x + idx * 4);
         fieldCopy(P.y, pre_y + idx * 4);
     }
