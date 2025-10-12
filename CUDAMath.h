@@ -72,25 +72,19 @@ __device__ void fieldAdd_opt_device(const unsigned long long a[4], const unsigne
     unsigned long long carry = 0;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        unsigned long long sum = a[i] + b[i];
-        unsigned long long carryout = (sum < a[i]) ? 1ULL : 0ULL;
-        unsigned long long old_sum = sum;
-        sum += carry;
-        carryout |= (sum < old_sum) ? 1ULL : 0ULL;
+        unsigned long long sum = a[i] + b[i] + carry;
         c[i] = sum;
-        carry = carryout;
+        carry = (sum < a[i] || (sum == a[i] && carry)) ? 1ULL : 0ULL;
     }
     if (carry || ge256(c, c_p)) {
+        unsigned long long temp[4];
+        fieldCopy(c, temp);
         unsigned long long borrow = 0;
         #pragma unroll
         for (int i = 0; i < 4; ++i) {
-            unsigned long long diff = c[i] - c_p[i];
-            unsigned long long borrowout = (diff > c[i]) ? 1ULL : 0ULL;
-            unsigned long long old_diff = diff;
-            diff -= borrow;
-            borrowout |= (diff > old_diff) ? 1ULL : 0ULL;
+            unsigned long long diff = temp[i] - c_p[i] - borrow;
             c[i] = diff;
-            borrow = borrowout;
+            borrow = (diff > temp[i] || (diff == temp[i] && borrow)) ? 1ULL : 0ULL;
         }
     }
 }
@@ -99,25 +93,19 @@ __device__ void fieldSub_opt_device(const unsigned long long a[4], const unsigne
     unsigned long long borrow = 0;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        unsigned long long diff = a[i] - b[i];
-        unsigned long long borrowout = (diff > a[i]) ? 1ULL : 0ULL;
-        unsigned long long old_diff = diff;
-        diff -= borrow;
-        borrowout |= (diff > old_diff) ? 1ULL : 0ULL;
+        unsigned long long diff = a[i] - b[i] - borrow;
         c[i] = diff;
-        borrow = borrowout;
+        borrow = (diff > a[i] || (diff == a[i] && borrow)) ? 1ULL : 0ULL;
     }
     if (borrow) {
+        unsigned long long temp[4];
+        fieldCopy(c, temp);
         unsigned long long carry = 0;
         #pragma unroll
         for (int i = 0; i < 4; ++i) {
-            unsigned long long sum = c[i] + c_p[i];
-            unsigned long long carryout = (sum < c[i]) ? 1ULL : 0ULL;
-            unsigned long long old_sum = sum;
-            sum += carry;
-            carryout |= (sum < old_sum) ? 1ULL : 0ULL;
+            unsigned long long sum = temp[i] + c_p[i] + carry;
             c[i] = sum;
-            carry = carryout;
+            carry = (sum < temp[i] || (sum == temp[i] && carry)) ? 1ULL : 0ULL;
         }
     }
 }
