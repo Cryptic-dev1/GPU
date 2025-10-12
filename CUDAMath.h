@@ -13,7 +13,7 @@
 // Verify unsigned long long size
 static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bits");
 
-// PTX Assembly Macros (kept for other functions, but not used in add/sub)
+// PTX Assembly Macros (kept for other functions)
 #define UADDO(c, a, b) asm volatile ("add.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADDC(c, a, b) asm volatile ("addc.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADD(c, a, b) asm volatile ("addc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b))
@@ -69,41 +69,55 @@ __host__ __device__ void fieldCopy(const unsigned long long a[4], unsigned long 
 }
 
 __device__ void fieldAdd_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
-    __uint128_t sum = 0;
+    unsigned long long carry = 0;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        sum += (__uint128_t)a[i] + b[i];
-        c[i] = (unsigned long long)sum;
-        sum >>= 64;
+        unsigned long long sum = a[i] + b[i];
+        unsigned long long carryout = (sum < a[i]) ? 1ULL : 0ULL;
+        unsigned long long old_sum = sum;
+        sum += carry;
+        carryout |= (sum < old_sum) ? 1ULL : 0ULL;
+        c[i] = sum;
+        carry = carryout;
     }
-    if (sum || ge256(c, c_p)) {
-        __uint128_t diff = 0;
+    if (carry || ge256(c, c_p)) {
+        unsigned long long borrow = 0;
         #pragma unroll
         for (int i = 0; i < 4; ++i) {
-            diff += (__uint128_t)c[i] - c_p[i];
-            c[i] = (unsigned long long)diff;
-            diff >>= 64;
-            if (((long long)diff) < 0) diff |= ((__uint128_t)0xFFFFFFFFFFFFFFFFULL << 64);
+            unsigned long long diff = c[i] - c_p[i];
+            unsigned long long borrowout = (diff > c[i]) ? 1ULL : 0ULL;
+            unsigned long long old_diff = diff;
+            diff -= borrow;
+            borrowout |= (diff > old_diff) ? 1ULL : 0ULL;
+            c[i] = diff;
+            borrow = borrowout;
         }
     }
 }
 
 __device__ void fieldSub_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
-    __uint128_t diff = 0;
+    unsigned long long borrow = 0;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        diff += (__uint128_t)a[i] - b[i];
-        c[i] = (unsigned long long)diff;
-        diff >>= 64;
-        if (((long long)diff) < 0) diff |= ((__uint128_t)0xFFFFFFFFFFFFFFFFULL << 64);
+        unsigned long long diff = a[i] - b[i];
+        unsigned long long borrowout = (diff > a[i]) ? 1ULL : 0ULL;
+        unsigned long long old_diff = diff;
+        diff -= borrow;
+        borrowout |= (diff > old_diff) ? 1ULL : 0ULL;
+        c[i] = diff;
+        borrow = borrowout;
     }
-    if (((long long)diff) < 0) {
-        __uint128_t sum = 0;
+    if (borrow) {
+        unsigned long long carry = 0;
         #pragma unroll
         for (int i = 0; i < 4; ++i) {
-            sum += (__uint128_t)c[i] + c_p[i];
-            c[i] = (unsigned long long)sum;
-            sum >>= 64;
+            unsigned long long sum = c[i] + c_p[i];
+            unsigned long long carryout = (sum < c[i]) ? 1ULL : 0ULL;
+            unsigned long long old_sum = sum;
+            sum += carry;
+            carryout |= (sum < old_sum) ? 1ULL : 0ULL;
+            c[i] = sum;
+            carry = carryout;
         }
     }
 }
