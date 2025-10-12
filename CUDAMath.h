@@ -13,7 +13,7 @@
 // Verify unsigned long long size
 static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bits");
 
-// PTX Assembly Macros
+// PTX Assembly Macros (kept for other functions)
 #define UADDO(c, a, b) asm volatile ("add.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADDC(c, a, b) asm volatile ("addc.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADD(c, a, b) asm volatile ("addc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b))
@@ -72,10 +72,9 @@ __device__ void fieldAdd_opt_device(const unsigned long long a[4], const unsigne
     unsigned long long carry = 0;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        unsigned long long temp = a[i];
-        asm volatile ("add.cc.u64 %0, %1, %2;" : "=l"(temp) : "l"(temp), "l"(b[i]) : "memory");
-        asm volatile ("addc.u64 %0, %1, %2;" : "=l"(c[i]) : "l"(temp), "l"(carry));
-        carry = (temp < a[i] || (temp == a[i] && carry)) ? 1ULL : 0ULL;
+        unsigned long long sum = a[i] + b[i] + carry;
+        c[i] = sum;
+        carry = (sum < a[i] || (sum == a[i] && carry)) ? 1ULL : 0ULL;
     }
     if (carry || ge256(c, c_p)) {
         unsigned long long temp[4];
