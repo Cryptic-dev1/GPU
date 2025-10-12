@@ -45,6 +45,7 @@ __device__ __constant__ unsigned long long Gy_d_fallback[4] = {
 
 // Host-side copy of c_p
 static const unsigned long long host_c_p[4] = {0xfffffc2fULL, 0xffffffffULL, 0xffffffffULL, 0xffffffffULL};
+static const unsigned long long host_c_mu[5] = {0x1000003d1ULL, 0ULL, 0ULL, 0ULL, 1ULL};
 
 // Utility function for zero check
 __host__ __device__ __forceinline__ bool isZero256(const unsigned long long a[4]) {
@@ -63,7 +64,74 @@ __host__ __device__ __forceinline__ bool isZero256(const unsigned long long a[4]
 #define __sright128(a, b, n) ((a) >> (n)) | ((b) << (64 - (n)))
 #define __sleft128(a, b, n) ((b) << (n)) | ((a) >> (64 - (n)))
 
-// Field Utility Functions
+// Host Field Utility Functions
+__host__ void fieldAdd_host(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
+    unsigned long long carry = 0;
+    for (int i = 0; i < 4; ++i) {
+        unsigned long long sum = a[i] + b[i] + carry;
+        c[i] = sum;
+        carry = (sum < a[i] || (sum == a[i] && carry)) ? 1ULL : 0ULL;
+    }
+    if (carry || ge256(c, host_c_p)) {
+        unsigned long long temp[4];
+        fieldCopy(c, temp);
+        unsigned long long borrow = 0;
+        for (int i = 0; i < 4; ++i) {
+            unsigned long long diff = temp[i] - host_c_p[i] - borrow;
+            c[i] = diff;
+            borrow = (diff > temp[i] || (diff == temp[i] && borrow)) ? 1ULL : 0ULL;
+        }
+    }
+}
+
+__host__ void fieldSub_host(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
+    unsigned long long borrow = 0;
+    for (int i = 0; i < 4; ++i) {
+        unsigned long long diff = a[i] - b[i] - borrow;
+        c[i] = diff;
+        borrow = (diff > a[i] || (diff == a[i] && borrow)) ? 1ULL : 0ULL;
+    }
+    if (borrow) {
+        unsigned long long temp[4];
+        fieldCopy(c, temp);
+        unsigned long long carry = 0;
+        for (int i = 0; i < 4; ++i) {
+            unsigned long long sum = temp[i] + host_c_p[i] + carry;
+            c[i] = sum;
+            carry = (sum < temp[i] || (sum == temp[i] && carry)) ? 1ULL : 0ULL;
+        }
+    }
+}
+
+__host__ void fieldMul_host(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[8]) {
+    unsigned long long temp[8] = {0};
+    for (int i = 0; i < 4; ++i) {
+        unsigned long long carry = 0;
+        for (int j = 0; j < 4; ++j) {
+            __uint128_t prod = (__uint128_t)a[i] * b[j] + temp[i + j] + carry;
+            temp[i + j] = (unsigned long long)prod;
+            carry = (unsigned long long)(prod >> 64);
+        }
+        temp[i + 4] += carry;
+    }
+    for (int i = 0; i < 8; ++i) c[i] = temp[i];
+}
+
+__host__ void fieldSqr_host(const unsigned long long a[4], unsigned long long c[8]) {
+    fieldMul_host(a, a, c);
+}
+
+__host__ void modred_barrett_host(const unsigned long long in[8], unsigned long long out[4]) {
+    unsigned long long q[5], tmp[8];
+    fieldMul_host(in + 4, host_c_mu, q);
+    fieldMul_host(q, host_c_p, tmp);
+    fieldSub_host(in, tmp, out);
+    if (ge256(out, host_c_p)) {
+        fieldSub_host(out, host_c_p, out);
+    }
+}
+
+// Device Field Utility Functions
 __host__ __device__ void fieldSetZero(unsigned long long a[4]) {
     #pragma unroll
     for (int i = 0; i < 4; ++i) a[i] = 0ULL;
@@ -309,12 +377,12 @@ __host__ __device__ bool ge256_u64(const unsigned long long a[4], unsigned long 
 // Curve validation function (y^2 = x^3 + 7 mod p)
 __host__ bool isPointOnCurve(const unsigned long long x[4], const unsigned long long y[4]) {
     unsigned long long y2[8], x3[8], seven[4] = {7ULL, 0ULL, 0ULL, 0ULL}, temp[8], result[4], x3_plus_7[4];
-    fieldSqr_opt_device(y, y2);
-    modred_barrett_opt_device(y2, result); // y^2 mod p
-    fieldSqr_opt_device(x, temp);
-    fieldMul_opt_device(temp, x, x3); // x^3
-    modred_barrett_opt_device(x3, x3_plus_7);
-    fieldAdd_opt_device(x3_plus_7, seven, x3_plus_7); // x^3 + 7 mod p
+    fieldSqr_host(y, y2);
+    modred_barrett_host(y2, result); // y^2 mod p
+    fieldSqr_host(x, temp);
+    fieldMul_host(temp, x, x3); // x^3
+    modred_barrett_host(x3, x3_plus_7);
+    fieldAdd_host(x3_plus_7, seven, x3_plus_7); // x^3 + 7 mod p
     return _IsEqual(result, x3_plus_7);
 }
 
