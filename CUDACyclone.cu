@@ -169,6 +169,14 @@ int main(int argc, char* argv[]) {
         std::cout << "Parsed grid: blocks=" << blocks << ", threadsPerBlock=" << threadsPerBlock << "\n";
     }
 
+    // Ensure blocks * threadsPerBlock does not exceed MAX_BATCH_SIZE
+    if (blocks * threadsPerBlock > MAX_BATCH_SIZE) {
+        blocks = (MAX_BATCH_SIZE + threadsPerBlock - 1) / threadsPerBlock;
+        if (verbose) {
+            std::cout << "Adjusted blocks to " << blocks << " to match MAX_BATCH_SIZE=" << MAX_BATCH_SIZE << "\n";
+        }
+    }
+
     // Parse range
     unsigned long long start[4], end[4], range_len[4];
     std::string start_str = range_str.substr(0, range_str.find(':'));
@@ -229,6 +237,8 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemset(d_found_flag, 0, sizeof(int)));
     CUDA_CHECK(cudaMemset(d_hashes_accum, 0, sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemset(d_any_left, 0, sizeof(unsigned int)));
+    CUDA_CHECK(cudaMemset(d_P, 0, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_R, 0, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
 
     // Set constants
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_hash160, target_hash160, 20 * sizeof(uint8_t)));
@@ -328,14 +338,14 @@ int main(int argc, char* argv[]) {
                 completed_all = true;
                 break;
             }
-            CUDA_CHECK(cudaMemcpy(d_start_scalars, h_start_scalars, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
             for (int i = 0; i < MAX_BATCH_SIZE; ++i) {
                 inc256(h_start_scalars + i*4, MAX_BATCH_SIZE);
             }
+            CUDA_CHECK(cudaMemcpy(d_start_scalars, h_start_scalars, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
             continue;
         }
         if (qs != cudaErrorNotReady) {
-            CUDA_CHECK(cudaGetLastError());
+            CUDA_CHECK(qs);
             stop_all = true;
             break;
         }

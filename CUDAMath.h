@@ -248,6 +248,7 @@ __device__ void scalarMulBaseJacobian(const unsigned long long scalar[4], unsign
         pointDoubleJacobian(R, R);
         if ((scalar[i/64] >> (i % 64)) & 1ULL) {
             JacobianPoint P;
+            if (i >= PRECOMPUTE_SIZE) return; // Bounds check
             fieldCopy(pre_Gx + (i * 4), P.x);
             fieldCopy(pre_Gy + (i * 4), P.y);
             fieldSetZero(P.z);
@@ -288,7 +289,7 @@ __host__ __device__ bool ge256_u64(const unsigned long long a[4], unsigned long 
 
 __global__ void scalarMulKernelBase(const unsigned long long* scalars_in, unsigned long long* outX, unsigned long long* outY, int N, unsigned long long* d_pre_Gx, unsigned long long* d_pre_Gy, unsigned long long* d_pre_phiGx, unsigned long long* d_pre_phiGy) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= N) return;
+    if (idx >= N || idx >= MAX_BATCH_SIZE) return;
     scalarMulBaseJacobian(scalars_in + idx*4, outX + idx*4, outY + idx*4, d_pre_Gx, d_pre_Gy, d_pre_phiGx, d_pre_phiGy);
 }
 
