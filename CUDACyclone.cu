@@ -480,7 +480,7 @@ int main(int argc, char* argv[]) {
                                                                  d_counts256, d_found_flag, d_found_result, d_hashes_accum,
                                                                  d_any_left, d_pre_Gx_local, d_pre_Gy_local, d_pre_phiGx_local, d_pre_phiGy_local);
         CUDA_CHECK(cudaGetLastError());
-        CUDA_CHECK(cudaStreamSynchronize(streamKernel));
+        //CUDA_CHECK(cudaStreamSynchronize(streamKernel));
 
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration<double>(now - tLast).count() >= 0.5) {
