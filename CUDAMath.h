@@ -294,7 +294,7 @@ __device__ void pointAddJacobian(const JacobianPoint* P, const JacobianPoint* Q,
     fieldSqr_opt_device(h, i);
     fieldMul_opt_device(h, i, j);
     fieldSub_opt_device(s2, s1, r, &borrow);
-    fieldMul_opt_device(r, r, r);
+    fieldSqr_opt_device(r, r); // Changed to avoid modifying r directly
     fieldMul_opt_device(u1, i, v);
     fieldSqr_opt_device(r, R->x);
     fieldSub_opt_device(R->x, j, R->x, &borrow);
@@ -337,7 +337,7 @@ __device__ void pointAddMixed(const JacobianPoint* P, const unsigned long long Q
     fieldSqr_opt_device(h, i);
     fieldMul_opt_device(h, i, j);
     fieldSub_opt_device(s2, Py, r, &borrow);
-    fieldMul_opt_device(r, r, r);
+    fieldSqr_opt_device(r, r); // Changed to avoid modifying r directly
     fieldMul_opt_device(Px, i, v);
     fieldSqr_opt_device(r, R->x);
     fieldSub_opt_device(R->x, j, R->x, &borrow);
