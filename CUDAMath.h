@@ -72,37 +72,53 @@ __device__ void fieldAdd_opt_device(const unsigned long long a[4], const unsigne
     unsigned long long carry = 0;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        unsigned long long sum = a[i] + b[i] + carry;
-        c[i] = sum;
-        carry = (sum < a[i] || (sum == a[i] && carry)) ? 1ULL : 0ULL;
+        if (a[i] > 0xFFFFFFFFFFFFFFFFULL - b[i] - carry) {
+            c[i] = a[i] + b[i] + carry - 0x10000000000000000ULL;
+            carry = 1ULL;
+        } else {
+            c[i] = a[i] + b[i] + carry;
+            carry = 0ULL;
+        }
     }
     if (carry || ge256(c, c_p)) {
-        unsigned long long temp[4];
-        fieldCopy(c, temp);
         unsigned long long borrow = 0;
-        c[0] = temp[0] - c_p[0];
-        borrow = (c[0] > temp[0]) ? 1ULL : 0ULL;
-        c[1] = temp[1] - c_p[1] - borrow;
-        borrow = (c[1] > temp[1] || (c[1] == temp[1] && borrow)) ? 1ULL : 0ULL;
-        c[2] = temp[2] - c_p[2] - borrow;
-        borrow = (c[2] > temp[2] || (c[2] == temp[2] && borrow)) ? 1ULL : 0ULL;
-        c[3] = temp[3] - c_p[3] - borrow;
+        #pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            if (c[i] < c_p[i] + borrow) {
+                c[i] = 0x10000000000000000ULL + c[i] - c_p[i] - borrow;
+                borrow = 1ULL;
+            } else {
+                c[i] = c[i] - c_p[i] - borrow;
+                borrow = 0ULL;
+            }
+        }
     }
 }
 
 __device__ void fieldSub_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
     unsigned long long borrow = 0;
-    USUBO(c[0], a[0], b[0]);
-    USUBC(c[1], a[1], b[1]);
-    USUBC(c[2], a[2], b[2]);
-    USUB(c[3], a[3], b[3]);
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) {
+        if (a[i] < b[i] + borrow) {
+            c[i] = 0x10000000000000000ULL + a[i] - b[i] - borrow;
+            borrow = 1ULL;
+        } else {
+            c[i] = a[i] - b[i] - borrow;
+            borrow = 0ULL;
+        }
+    }
     if (borrow) {
-        unsigned long long temp[4];
-        fieldCopy(c, temp);
-        UADDO(c[0], temp[0], c_p[0]);
-        UADDC(c[1], temp[1], c_p[1]);
-        UADDC(c[2], temp[2], c_p[2]);
-        UADD(c[3], temp[3], c_p[3]);
+        unsigned long long carry = 0;
+        #pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            if (c[i] > 0xFFFFFFFFFFFFFFFFULL - c_p[i] - carry) {
+                c[i] = c[i] + c_p[i] + carry - 0x10000000000000000ULL;
+                carry = 1ULL;
+            } else {
+                c[i] = c[i] + c_p[i] + carry;
+                carry = 0ULL;
+            }
+        }
     }
 }
 
@@ -131,9 +147,7 @@ __device__ void modred_barrett_opt_device(const unsigned long long in[8], unsign
     fieldMul_opt_device(q, c_p, tmp);
     fieldSub_opt_device(in, tmp, out);
     if (ge256(out, c_p)) {
-        unsigned long long temp[4];
-        fieldCopy(out, temp);
-        fieldSub_opt_device(temp, c_p, out);
+        fieldSub_opt_device(out, c_p, out);
     }
 }
 
