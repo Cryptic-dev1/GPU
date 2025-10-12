@@ -13,7 +13,7 @@
 // Verify unsigned long long size
 static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bits");
 
-// PTX Assembly Macros (kept for other functions)
+// PTX Assembly Macros (kept for other functions, but not used in add/sub)
 #define UADDO(c, a, b) asm volatile ("add.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADDC(c, a, b) asm volatile ("addc.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADD(c, a, b) asm volatile ("addc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b))
@@ -69,55 +69,41 @@ __host__ __device__ void fieldCopy(const unsigned long long a[4], unsigned long 
 }
 
 __device__ void fieldAdd_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
-    unsigned long long carry = 0;
+    __uint128_t sum = 0;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        if (a[i] > 0xFFFFFFFFFFFFFFFFULL - b[i] - carry) {
-            c[i] = a[i] + b[i] + carry - 0x10000000000000000ULL;
-            carry = 1ULL;
-        } else {
-            c[i] = a[i] + b[i] + carry;
-            carry = 0ULL;
-        }
+        sum += (__uint128_t)a[i] + b[i];
+        c[i] = (unsigned long long)sum;
+        sum >>= 64;
     }
-    if (carry || ge256(c, c_p)) {
-        unsigned long long borrow = 0;
+    if (sum || ge256(c, c_p)) {
+        __uint128_t diff = 0;
         #pragma unroll
         for (int i = 0; i < 4; ++i) {
-            if (c[i] < c_p[i] + borrow) {
-                c[i] = 0x10000000000000000ULL + c[i] - c_p[i] - borrow;
-                borrow = 1ULL;
-            } else {
-                c[i] = c[i] - c_p[i] - borrow;
-                borrow = 0ULL;
-            }
+            diff += (__uint128_t)c[i] - c_p[i];
+            c[i] = (unsigned long long)diff;
+            diff >>= 64;
+            if (((long long)diff) < 0) diff |= ((__uint128_t)0xFFFFFFFFFFFFFFFFULL << 64);
         }
     }
 }
 
 __device__ void fieldSub_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
-    unsigned long long borrow = 0;
+    __uint128_t diff = 0;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        if (a[i] < b[i] + borrow) {
-            c[i] = 0x10000000000000000ULL + a[i] - b[i] - borrow;
-            borrow = 1ULL;
-        } else {
-            c[i] = a[i] - b[i] - borrow;
-            borrow = 0ULL;
-        }
+        diff += (__uint128_t)a[i] - b[i];
+        c[i] = (unsigned long long)diff;
+        diff >>= 64;
+        if (((long long)diff) < 0) diff |= ((__uint128_t)0xFFFFFFFFFFFFFFFFULL << 64);
     }
-    if (borrow) {
-        unsigned long long carry = 0;
+    if (((long long)diff) < 0) {
+        __uint128_t sum = 0;
         #pragma unroll
         for (int i = 0; i < 4; ++i) {
-            if (c[i] > 0xFFFFFFFFFFFFFFFFULL - c_p[i] - carry) {
-                c[i] = c[i] + c_p[i] + carry - 0x10000000000000000ULL;
-                carry = 1ULL;
-            } else {
-                c[i] = c[i] + c_p[i] + carry;
-                carry = 0ULL;
-            }
+            sum += (__uint128_t)c[i] + c_p[i];
+            c[i] = (unsigned long long)sum;
+            sum >>= 64;
         }
     }
 }
