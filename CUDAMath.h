@@ -79,10 +79,14 @@ __device__ void fieldAdd_opt_device(const unsigned long long a[4], const unsigne
     if (carry || ge256(c, c_p)) {
         unsigned long long temp[4];
         fieldCopy(c, temp);
-        USUBO(c[0], temp[0], c_p[0]);
-        USUBC(c[1], temp[1], c_p[1]);
-        USUBC(c[2], temp[2], c_p[2]);
-        USUB(c[3], temp[3], c_p[3]);
+        unsigned long long borrow = 0;
+        c[0] = temp[0] - c_p[0];
+        borrow = (c[0] > temp[0]) ? 1ULL : 0ULL;
+        c[1] = temp[1] - c_p[1] - borrow;
+        borrow = (c[1] > temp[1] || (c[1] == temp[1] && borrow)) ? 1ULL : 0ULL;
+        c[2] = temp[2] - c_p[2] - borrow;
+        borrow = (c[2] > temp[2] || (c[2] == temp[2] && borrow)) ? 1ULL : 0ULL;
+        c[3] = temp[3] - c_p[3] - borrow;
     }
 }
 
