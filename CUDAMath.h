@@ -686,22 +686,7 @@ __device__ void split_glv(const unsigned long long scalar[4], unsigned long long
     }
 }
 
-__host__ __device__ void fieldNeg(const unsigned long long a[4], unsigned long long out[4]) {
-    if (isZero256(a)) {
-        fieldSetZero(out);
-        return;
-    }
-#ifdef __CUDA_ARCH__
-    fieldSub_opt_device(c_p, a, out);
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("fieldNeg: a=%llx:%llx:%llx:%llx, out=%llx:%llx:%llx:%llx\n",
-               a[0], a[1], a[2], a[3], out[0], out[1], out[2], out[3]);
-    }
-#else
-    fieldSub_opt_host(host_c_p, a, out);
-#endif
-}
-
 __host__ __device__ void pointSetInfinity(JacobianPoint &P) {
     fieldSetZero(P.x);
     fieldSetZero(P.y);
