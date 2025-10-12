@@ -17,8 +17,12 @@ struct JacobianPoint {
 // Constants (little-endian)
 __device__ __constant__ uint8_t  c_target_hash160[20];
 __device__ __constant__ uint32_t c_target_prefix;
-__device__ __constant__ unsigned long long Gx_d[4] = {0x59f2815bULL, 0x0ea3fe7fULL, 0x2e6ff0b0ULL, 0x79e81dc6ULL};
-__device__ __constant__ unsigned long long Gy_d[4] = {0x4fe342e2ULL, 0xe0fa9e5bULL, 0x7c0cad3cULL, 0x9f07d8fbULL};
+__device__ __constant__ unsigned long long Gx_d[4] = {
+    0x9f2815b16f81798ULL, 0x29bfcdb2dce28d95ULL, 0x55a06295ce870b07ULL, 0x79be667ef9dcbbacULL
+};
+__device__ __constant__ unsigned long long Gy_d[4] = {
+    0x9c47d08ffb10d4b8ULL, 0xfd17b448a6855419ULL, 0x5da4fbfc0e1108a8ULL, 0x483ada7726a3c465ULL
+};
 
 // Precomputed tables (2^16 = 65,536 points, ~256 MB total)
 #define PRECOMPUTE_WINDOW 16
