@@ -13,7 +13,7 @@
 // Verify unsigned long long size
 static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bits");
 
-// PTX Assembly Macros (kept for other functions)
+// PTX Assembly Macros
 #define UADDO(c, a, b) asm volatile ("add.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADDC(c, a, b) asm volatile ("addc.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory")
 #define UADD(c, a, b) asm volatile ("addc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b))
@@ -41,6 +41,9 @@ __device__ __constant__ unsigned long long c_beta_fallback[4] = {
 };
 __device__ __constant__ unsigned long long Gy_d_fallback[4] = {
     0xfb10d4b8ULL, 0x9c47d08fULL, 0xa6855419ULL, 0x483ada77ULL
+};
+__device__ __constant__ unsigned long long lambda[4] = {
+    0x2c558d3aULL, 0xdf74767cULL, 0x20816678ULL, 0x5363ad4cULL
 };
 
 // Host-side copy of c_p
@@ -388,16 +391,20 @@ __host__ bool isPointOnCurve(const unsigned long long x[4], const unsigned long 
 }
 
 // Device curve validation kernel
+__device__ bool isPointOnCurve_device(const unsigned long long x[4], const unsigned long long y[4]) {
+    unsigned long long y2[8], x3[8], seven[4] = {7ULL, 0ULL, 0ULL, 0ULL}, temp[8], result[4], x3_plus_7[4];
+    fieldSqr_opt_device(y, y2);
+    modred_barrett_opt_device(y2, result); // y^2 mod p
+    fieldSqr_opt_device(x, temp);
+    fieldMul_opt_device(temp, x, x3); // x^3
+    modred_barrett_opt_device(x3, x3_plus_7);
+    fieldAdd_opt_device(x3_plus_7, seven, x3_plus_7); // x^3 + 7 mod p
+    return _IsEqual(result, x3_plus_7);
+}
+
 __global__ void validate_point_kernel(const unsigned long long* x, const unsigned long long* y, int* valid) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        unsigned long long y2[8], x3[8], seven[4] = {7ULL, 0ULL, 0ULL, 0ULL}, temp[8], result[4], x3_plus_7[4];
-        fieldSqr_opt_device(y, y2);
-        modred_barrett_opt_device(y2, result); // y^2 mod p
-        fieldSqr_opt_device(x, temp);
-        fieldMul_opt_device(temp, x, x3); // x^3
-        modred_barrett_opt_device(x3, x3_plus_7);
-        fieldAdd_opt_device(x3_plus_7, seven, x3_plus_7); // x^3 + 7 mod p
-        *valid = _IsEqual(result, x3_plus_7);
+        *valid = isPointOnCurve_device(x, y);
     }
 }
 
@@ -419,6 +426,12 @@ __global__ void debug_precompute_verify_kernel(unsigned long long* pre_x, unsign
     if (idx >= size) return;
     fieldCopy(pre_x + idx * 4, debug_out + idx * 8);
     fieldCopy(pre_y + idx * 4, debug_out + idx * 8 + 4);
+}
+
+__global__ void compute_phi_base_kernel(unsigned long long* phi_x, unsigned long long* phi_y, const unsigned long long* pre_Gx, const unsigned long long* pre_Gy) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        scalarMulBaseJacobian(lambda, phi_x, phi_y, pre_Gx, pre_Gy, pre_Gx, pre_Gy);
+    }
 }
 
 __global__ void precompute_table_kernel(JacobianPoint base, unsigned long long* pre_x, unsigned long long* pre_y, unsigned long long size) {

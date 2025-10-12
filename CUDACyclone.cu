@@ -104,15 +104,6 @@ __global__ void debug_test_write_kernel(unsigned long long* phi_x, unsigned long
     }
 }
 
-__global__ void compute_phi_base_kernel(unsigned long long* phi_x, unsigned long long* phi_y) {
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        unsigned long long temp[8];
-        fieldMul_opt_device(Gx_d, c_beta_fallback, temp);
-        modred_barrett_opt_device(temp, phi_x);
-        fieldCopy(Gy_d_fallback, phi_y);
-    }
-}
-
 __global__ void searchKernel(
     const unsigned long long* scalars_in,
     unsigned long long* outX,
@@ -316,108 +307,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_hash160, target_hash160, 20 * sizeof(uint8_t)));
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_prefix, &target_prefix, sizeof(uint32_t)));
 
-    // Precompute phi(G)
-    unsigned long long *d_phi_x, *d_phi_y;
-    CUDA_CHECK(cudaMalloc(&d_phi_x, 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_phi_y, 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_phi_x, 0, 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_phi_y, 0, 4 * sizeof(unsigned long long)));
-
-    // Debug: Test simple write to d_phi_x and d_phi_y
-    if (verbose) {
-        std::cout << "Testing memory write to d_phi_x and d_phi_y...\n";
-    }
-    debug_test_write_kernel<<<1, 1>>>(d_phi_x, d_phi_y);
-    CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaDeviceSynchronize());
-    if (verbose) {
-        std::cout << "Debug write test passed\n";
-    }
-
-    // Run phi base computation
-    compute_phi_base_kernel<<<1, 1>>>(d_phi_x, d_phi_y);
-    CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaDeviceSynchronize());
-
-    // Validate phi(G) on device
-    validate_point_kernel<<<1, 1>>>(d_phi_x, d_phi_y, d_phi_valid);
-    CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaDeviceSynchronize());
-    int h_phi_valid;
-    CUDA_CHECK(cudaMemcpy(&h_phi_valid, d_phi_valid, sizeof(int), cudaMemcpyDeviceToHost));
-    if (!h_phi_valid) {
-        std::cerr << "Error: phi(G) point is not on the secp256k1 curve (device validation)\n";
-        CUDA_CHECK(cudaFree(d_phi_x));
-        CUDA_CHECK(cudaFree(d_phi_y));
-        CUDA_CHECK(cudaFree(d_start_scalars));
-        CUDA_CHECK(cudaFree(d_counts256));
-        CUDA_CHECK(cudaFree(d_P));
-        CUDA_CHECK(cudaFree(d_R));
-        CUDA_CHECK(cudaFree(d_found_flag));
-        CUDA_CHECK(cudaFree(d_found_result));
-        CUDA_CHECK(cudaFree(d_hashes_accum));
-        CUDA_CHECK(cudaFree(d_any_left));
-        CUDA_CHECK(cudaFree(d_pre_Gx_local));
-        CUDA_CHECK(cudaFree(d_pre_Gy_local));
-        CUDA_CHECK(cudaFree(d_pre_phiGx_local));
-        CUDA_CHECK(cudaFree(d_pre_phiGy_local));
-        CUDA_CHECK(cudaFree(d_debug_precompute));
-        CUDA_CHECK(cudaFree(d_phi_valid));
-        return EXIT_FAILURE;
-    }
-
-    // Validate phi(G) computation
-    unsigned long long h_phi_x[4], h_phi_y[4];
-    CUDA_CHECK(cudaMemcpy(h_phi_x, d_phi_x, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(h_phi_y, d_phi_y, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
-    if (verbose) {
-        std::cout << "phi_x: " << CryptoUtils::formatHex256(h_phi_x) << "\n";
-        std::cout << "phi_y: " << CryptoUtils::formatHex256(h_phi_y) << "\n";
-    }
-    if (isZero256(h_phi_x) || isZero256(h_phi_y)) {
-        std::cerr << "Error: phi(G) computation failed\n";
-        CUDA_CHECK(cudaFree(d_phi_x));
-        CUDA_CHECK(cudaFree(d_phi_y));
-        CUDA_CHECK(cudaFree(d_start_scalars));
-        CUDA_CHECK(cudaFree(d_counts256));
-        CUDA_CHECK(cudaFree(d_P));
-        CUDA_CHECK(cudaFree(d_R));
-        CUDA_CHECK(cudaFree(d_found_flag));
-        CUDA_CHECK(cudaFree(d_found_result));
-        CUDA_CHECK(cudaFree(d_hashes_accum));
-        CUDA_CHECK(cudaFree(d_any_left));
-        CUDA_CHECK(cudaFree(d_pre_Gx_local));
-        CUDA_CHECK(cudaFree(d_pre_Gy_local));
-        CUDA_CHECK(cudaFree(d_pre_phiGx_local));
-        CUDA_CHECK(cudaFree(d_pre_phiGy_local));
-        CUDA_CHECK(cudaFree(d_debug_precompute));
-        CUDA_CHECK(cudaFree(d_phi_valid));
-        return EXIT_FAILURE;
-    }
-
-    // Validate phi_base point on host
-    if (!isPointOnCurve(h_phi_x, h_phi_y)) {
-        std::cerr << "Error: phi_base point is not on the secp256k1 curve (host validation)\n";
-        CUDA_CHECK(cudaFree(d_phi_x));
-        CUDA_CHECK(cudaFree(d_phi_y));
-        CUDA_CHECK(cudaFree(d_start_scalars));
-        CUDA_CHECK(cudaFree(d_counts256));
-        CUDA_CHECK(cudaFree(d_P));
-        CUDA_CHECK(cudaFree(d_R));
-        CUDA_CHECK(cudaFree(d_found_flag));
-        CUDA_CHECK(cudaFree(d_found_result));
-        CUDA_CHECK(cudaFree(d_hashes_accum));
-        CUDA_CHECK(cudaFree(d_any_left));
-        CUDA_CHECK(cudaFree(d_pre_Gx_local));
-        CUDA_CHECK(cudaFree(d_pre_Gy_local));
-        CUDA_CHECK(cudaFree(d_pre_phiGx_local));
-        CUDA_CHECK(cudaFree(d_pre_phiGy_local));
-        CUDA_CHECK(cudaFree(d_debug_precompute));
-        CUDA_CHECK(cudaFree(d_phi_valid));
-        return EXIT_FAILURE;
-    }
-
-    // Precompute tables
+    // Precompute G tables
     JacobianPoint base;
     fieldCopy(h_Gx_d, base.x);
     fieldCopy(h_Gy_d, base.y);
@@ -432,8 +322,6 @@ int main(int argc, char* argv[]) {
     // Validate base point
     if (isZero256(base.x) || isZero256(base.y)) {
         std::cerr << "Error: base point initialization failed\n";
-        CUDA_CHECK(cudaFree(d_phi_x));
-        CUDA_CHECK(cudaFree(d_phi_y));
         CUDA_CHECK(cudaFree(d_start_scalars));
         CUDA_CHECK(cudaFree(d_counts256));
         CUDA_CHECK(cudaFree(d_P));
@@ -466,6 +354,69 @@ int main(int argc, char* argv[]) {
     // Validate precomputed points
     if (isZero256(h_pre_Gx) || isZero256(h_pre_Gy)) {
         std::cerr << "Error: precomputed Gx or Gy is zero\n";
+        CUDA_CHECK(cudaFree(d_start_scalars));
+        CUDA_CHECK(cudaFree(d_counts256));
+        CUDA_CHECK(cudaFree(d_P));
+        CUDA_CHECK(cudaFree(d_R));
+        CUDA_CHECK(cudaFree(d_found_flag));
+        CUDA_CHECK(cudaFree(d_found_result));
+        CUDA_CHECK(cudaFree(d_hashes_accum));
+        CUDA_CHECK(cudaFree(d_any_left));
+        CUDA_CHECK(cudaFree(d_pre_Gx_local));
+        CUDA_CHECK(cudaFree(d_pre_Gy_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGx_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGy_local));
+        CUDA_CHECK(cudaFree(d_debug_precompute));
+        CUDA_CHECK(cudaFree(d_phi_valid));
+        return EXIT_FAILURE;
+    }
+
+    // Precompute phi(G)
+    unsigned long long *d_phi_x, *d_phi_y;
+    CUDA_CHECK(cudaMalloc(&d_phi_x, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_phi_y, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_phi_x, 0, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_phi_y, 0, 4 * sizeof(unsigned long long)));
+
+    // Debug: Test simple write to d_phi_x and d_phi_y
+    if (verbose) {
+        std::cout << "Testing memory write to d_phi_x and d_phi_y...\n";
+    }
+    debug_test_write_kernel<<<1, 1>>>(d_phi_x, d_phi_y);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    if (verbose) {
+        std::cout << "Debug write test passed\n";
+    }
+
+    // Run phi base computation
+    if (verbose) {
+        std::cout << "Computing phi(G) using scalar multiplication...\n";
+    }
+    compute_phi_base_kernel<<<1, 1>>>(d_phi_x, d_phi_y, d_pre_Gx_local, d_pre_Gy_local);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    // Copy phi(G) for debugging
+    unsigned long long h_phi_x[4], h_phi_y[4];
+    CUDA_CHECK(cudaMemcpy(h_phi_x, d_phi_x, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_phi_y, d_phi_y, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    if (verbose) {
+        std::cout << "phi_x: " << CryptoUtils::formatHex256(h_phi_x) << "\n";
+        std::cout << "phi_y: " << CryptoUtils::formatHex256(h_phi_y) << "\n";
+    }
+
+    // Validate phi(G) on device
+    if (verbose) {
+        std::cout << "Validating phi(G) on device...\n";
+    }
+    validate_point_kernel<<<1, 1>>>(d_phi_x, d_phi_y, d_phi_valid);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    int h_phi_valid;
+    CUDA_CHECK(cudaMemcpy(&h_phi_valid, d_phi_valid, sizeof(int), cudaMemcpyDeviceToHost));
+    if (!h_phi_valid) {
+        std::cerr << "Error: phi(G) point is not on the secp256k1 curve (device validation)\n";
         CUDA_CHECK(cudaFree(d_phi_x));
         CUDA_CHECK(cudaFree(d_phi_y));
         CUDA_CHECK(cudaFree(d_start_scalars));
@@ -485,9 +436,35 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
+    // Validate phi(G) on host
+    if (verbose) {
+        std::cout << "Validating phi(G) on host...\n";
+    }
+    if (!isPointOnCurve(h_phi_x, h_phi_y)) {
+        std::cerr << "Error: phi_base point is not on the secp256k1 curve (host validation)\n";
+        CUDA_CHECK(cudaFree(d_phi_x));
+        CUDA_CHECK(cudaFree(d_phi_y));
+        CUDA_CHECK(cudaFree(d_start_scalars));
+        CUDA_CHECK(cudaFree(d_counts256));
+        CUDA_CHECK(cudaFree(d_P));
+        CUDA_CHECK(cudaFree(d_R));
+        CUDA_CHECK(cudaFree(d_found_flag));
+        CUDA_CHECK(cudaFree(d_found_result));
+        CUDA_CHECK(cudaFree(d_hashes_accum));
+        CUDA_CHECK(cudaFree(d_any_left));
+        CUDA_CHECK(cudaFree(d_pre_Gx_local));
+        CUDA_CHECK(cudaFree(d_pre_Gy_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGx_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGy_local));
+        CUDA_CHECK(cudaFree(d_debug_precompute));
+        CUDA_CHECK(cudaFree(d_phi_valid));
+        return EXIT_FAILURE;
+    }
+
+    // Precompute phi(G) tables
     JacobianPoint phi_base;
-    CUDA_CHECK(cudaMemcpy(phi_base.x, d_phi_x, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(phi_base.y, d_phi_y, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    fieldCopy(h_phi_x, phi_base.x);
+    fieldCopy(h_phi_y, phi_base.y);
     fieldSetZero(phi_base.z);
     phi_base.z[0] = 1ULL;
     phi_base.infinity = false;
