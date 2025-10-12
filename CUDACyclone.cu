@@ -79,67 +79,18 @@ __device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found
     return f == FOUND_READY;
 }
 
-__global__ void compute_phi_base_kernel(unsigned long long* phi_x, unsigned long long* phi_y) {
+// Debug kernel to test memory writes
+__global__ void debug_test_write_kernel(unsigned long long* phi_x, unsigned long long* phi_y) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        unsigned long long temp[8];
-        fieldMul_opt_device(Gx_d, c_beta, temp);
-        modred_barrett_opt_device(temp, phi_x);
-        fieldCopy(Gy_d, phi_y);
+        phi_x[0] = 0ULL;
+        phi_y[0] = 0ULL;
     }
 }
 
-__global__ void searchKernel(
-    const unsigned long long* scalars_in,
-    unsigned long long* outX,
-    unsigned long long* outY,
-    int N,
-    unsigned long long* counts,
-    int* found_flag,
-    FoundResult* found_result,
-    unsigned long long* hashes_accum,
-    unsigned int* any_left,
-    const unsigned long long* pre_Gx,
-    const unsigned long long* pre_Gy,
-    const unsigned long long* pre_phiGx,
-    const unsigned long long* pre_phiGy
-) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned lane = threadIdx.x % WARP_SIZE;
-    unsigned full_mask = 0xFFFFFFFF;
-    if (idx >= N || idx >= MAX_BATCH_SIZE) return;
-
-    unsigned long long scalar[4];
-    fieldCopy(scalars_in + idx*4, scalar);
-    unsigned long long Rx[4], Ry[4];
-    uint8_t hash[20];
-
-    for (int iter = 0; iter < 1000; ++iter) {
-        if (warp_found_ready(found_flag, full_mask, lane)) return;
-
-        scalarMulBaseJacobian(scalar, Rx, Ry, pre_Gx, pre_Gy, pre_phiGx, pre_phiGy);
-        getHash160_33_from_limbs((Ry[0] & 1ULL) ? 0x03 : 0x02, Rx, hash);
-
-        if (hash160_matches_prefix_then_full(hash, c_target_hash160, c_target_prefix)) {
-            int old = atomicCAS(found_flag, FOUND_NONE, FOUND_LOCK);
-            if (old == FOUND_NONE) {
-                FoundResult res;
-                res.threadId = idx;
-                res.iter = iter;
-                fieldCopy(scalar, res.scalar_val);
-                fieldCopy(Rx, res.Rx_val);
-                fieldCopy(Ry, res.Ry_val);
-                *found_result = res;
-                *found_flag = FOUND_READY;
-                return;
-            }
-        }
-
-        inc256_device(scalar, 1ULL);
-        atomicAdd(counts, 1ULL);
+__global__ void compute_phi_base_kernel(unsigned long long* phi_x, unsigned long long* phi_y) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        fieldCopy(Gy_d, phi_y); // Simplified for debugging
     }
-
-    *any_left = 1;
-    __syncthreads();
 }
 
 int main(int argc, char* argv[]) {
@@ -213,6 +164,19 @@ int main(int argc, char* argv[]) {
         std::cout << "Total threads        : " << (blocks * threadsPerBlock) << "\n";
     }
 
+    // Validate constants
+    unsigned long long h_Gx_d[4], h_c_beta[4];
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_Gx_d, Gx_d, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_c_beta, c_beta, 4 * sizeof(unsigned long long)));
+    if (verbose) {
+        std::cout << "Gx_d: " << CryptoUtils::formatHex256(h_Gx_d) << "\n";
+        std::cout << "c_beta: " << CryptoUtils::formatHex256(h_c_beta) << "\n";
+    }
+    if (isZero256(h_Gx_d) || isZero256(h_c_beta)) {
+        std::cerr << "Error: Gx_d or c_beta is zero\n";
+        return EXIT_FAILURE;
+    }
+
     // Allocate memory
     unsigned long long *d_start_scalars, *d_counts256, *d_P, *d_R, *d_pre_Gx_local, *d_pre_Gy_local, *d_pre_phiGx_local, *d_pre_phiGy_local;
     int *d_found_flag;
@@ -252,6 +216,21 @@ int main(int argc, char* argv[]) {
     unsigned long long *d_phi_x, *d_phi_y;
     CUDA_CHECK(cudaMalloc(&d_phi_x, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_phi_y, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_phi_x, 0, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_phi_y, 0, 4 * sizeof(unsigned long long)));
+
+    // Debug: Test simple write to d_phi_x and d_phi_y
+    if (verbose) {
+        std::cout << "Testing memory write to d_phi_x and d_phi_y...\n";
+    }
+    debug_test_write_kernel<<<1, 1>>>(d_phi_x, d_phi_y);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    if (verbose) {
+        std::cout << "Debug write test passed\n";
+    }
+
+    // Run phi base computation
     compute_phi_base_kernel<<<1, 1>>>(d_phi_x, d_phi_y);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
