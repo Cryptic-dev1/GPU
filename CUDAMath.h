@@ -1,4 +1,3 @@
-```cpp
 #ifndef CUDA_MATH_H
 #define CUDA_MATH_H
 
