@@ -437,6 +437,16 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_pre_phiGy_local));
         return EXIT_FAILURE;
     }
+    // Debug: Test write to d_pre_phiGx_local and d_pre_phiGy_local
+    if (verbose) {
+        std::cout << "Testing memory write to d_pre_phiGx_local and d_pre_phiGy_local...\n";
+    }
+    debug_precompute_write_kernel<<<precompute_blocks, threadsPerBlock>>>(d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE_LOCAL);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    if (verbose) {
+        std::cout << "Debug precompute write test passed\n";
+    }
     precompute_table_kernel<<<precompute_blocks, threadsPerBlock>>>(phi_base, d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE_LOCAL);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());

@@ -298,12 +298,19 @@ __global__ void scalarMulKernelBase(const unsigned long long* scalars_in, unsign
     scalarMulBaseJacobian(scalars_in + idx*4, outX + idx*4, outY + idx*4, d_pre_Gx, d_pre_Gy, d_pre_phiGx, d_pre_phiGy);
 }
 
+__global__ void debug_precompute_write_kernel(unsigned long long* pre_x, unsigned long long* pre_y, unsigned long long size) {
+    unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    pre_x[idx * 4] = 0ULL;
+    pre_y[idx * 4] = 0ULL;
+}
+
 __global__ void precompute_table_kernel(JacobianPoint base, unsigned long long* pre_x, unsigned long long* pre_y, unsigned long long size) {
     unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
     JacobianPoint P = base;
-    // Limit iterations for debugging
-    unsigned long long max_bits = min(256ULL, size);
+    // Limit iterations to 1 for debugging phi_base
+    unsigned long long max_bits = (idx == 0) ? 0 : 1;
     for (unsigned long long bit = 0; bit < idx && bit < max_bits; ++bit) {
         if (bit % 2 == 0) {
             pointDoubleJacobian(P, P);
