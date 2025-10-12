@@ -70,22 +70,13 @@ __host__ __device__ void fieldCopy(const unsigned long long a[4], unsigned long 
 
 __device__ void fieldAdd_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
     unsigned long long carry = 0;
-    unsigned long long temp;
-    UADDO(temp, a[0], b[0]);
-    c[0] = temp;
-    carry = (temp < a[0]) ? 1ULL : 0ULL;
-    UADDC(temp, a[1], b[1]);
-    UADD(temp, temp, carry);
-    c[1] = temp;
-    carry = (temp < a[1] || (temp == a[1] && carry)) ? 1ULL : 0ULL;
-    UADDC(temp, a[2], b[2]);
-    UADD(temp, temp, carry);
-    c[2] = temp;
-    carry = (temp < a[2] || (temp == a[2] && carry)) ? 1ULL : 0ULL;
-    UADDC(temp, a[3], b[3]);
-    UADD(temp, temp, carry);
-    c[3] = temp;
-    carry = (temp < a[3] || (temp == a[3] && carry)) ? 1ULL : 0ULL;
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) {
+        unsigned long long temp = a[i];
+        asm volatile ("add.cc.u64 %0, %1, %2;" : "=l"(temp) : "l"(temp), "l"(b[i]) : "memory");
+        asm volatile ("addc.u64 %0, %1, %2;" : "=l"(c[i]) : "l"(temp), "l"(carry));
+        carry = (temp < a[i] || (temp == a[i] && carry)) ? 1ULL : 0ULL;
+    }
     if (carry || ge256(c, c_p)) {
         unsigned long long temp[4];
         fieldCopy(c, temp);
