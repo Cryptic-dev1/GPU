@@ -109,7 +109,7 @@ __global__ void compute_phi_base_kernel(unsigned long long* phi_x, unsigned long
         unsigned long long temp[8];
         fieldMul_opt_device(Gx_d, c_beta_fallback, temp);
         modred_barrett_opt_device(temp, phi_x);
-        fieldCopy(Gy_d, phi_y);
+        fieldCopy(Gy_d_fallback, phi_y);
     }
 }
 
@@ -241,15 +241,17 @@ int main(int argc, char* argv[]) {
     }
 
     // Validate constants
-    unsigned long long h_Gx_d[4], h_c_beta[4];
+    unsigned long long h_Gx_d[4], h_Gy_d[4], h_c_beta[4];
     CUDA_CHECK(cudaMemcpyFromSymbol(h_Gx_d, Gx_d, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_Gy_d, Gy_d, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemcpyFromSymbol(h_c_beta, c_beta, 4 * sizeof(unsigned long long)));
     if (verbose) {
         std::cout << "Gx_d: " << CryptoUtils::formatHex256(h_Gx_d) << "\n";
+        std::cout << "Gy_d: " << CryptoUtils::formatHex256(h_Gy_d) << "\n";
         std::cout << "c_beta: " << CryptoUtils::formatHex256(h_c_beta) << "\n";
     }
-    if (isZero256(h_Gx_d) || isZero256(h_c_beta)) {
-        std::cerr << "Error: Gx_d or c_beta is zero\n";
+    if (isZero256(h_Gx_d) || isZero256(h_Gy_d) || isZero256(h_c_beta)) {
+        std::cerr << "Error: Gx_d, Gy_d, or c_beta is zero\n";
         return EXIT_FAILURE;
     }
 
@@ -341,10 +343,15 @@ int main(int argc, char* argv[]) {
     // Precompute tables
     JacobianPoint base;
     fieldCopy(Gx_d, base.x);
-    fieldCopy(Gy_d, base.y);
+    fieldCopy(Gy_d_fallback, base.y); // Use fallback Gy_d
     fieldSetZero(base.z);
     base.z[0] = 1ULL;
     base.infinity = false;
+    // Debug: Print base point
+    if (verbose) {
+        std::cout << "base.x: " << CryptoUtils::formatHex256(base.x) << "\n";
+        std::cout << "base.y: " << CryptoUtils::formatHex256(base.y) << "\n";
+    }
     // Validate base point
     if (isZero256(base.x) || isZero256(base.y)) {
         std::cerr << "Error: base point initialization failed\n";
@@ -384,6 +391,11 @@ int main(int argc, char* argv[]) {
     fieldSetZero(phi_base.z);
     phi_base.z[0] = 1ULL;
     phi_base.infinity = false;
+    // Debug: Print phi_base point
+    if (verbose) {
+        std::cout << "phi_base.x: " << CryptoUtils::formatHex256(phi_base.x) << "\n";
+        std::cout << "phi_base.y: " << CryptoUtils::formatHex256(phi_base.y) << "\n";
+    }
     // Verify phi_base
     if (isZero256(phi_base.x) || isZero256(phi_base.y)) {
         std::cerr << "Error: phi_base initialization failed\n";

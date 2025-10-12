@@ -39,6 +39,9 @@ __device__ __constant__ unsigned long long MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 __device__ __constant__ unsigned long long c_beta_fallback[4] = {
     0x719501eeULL, 0xc1396c28ULL, 0x12f58995ULL, 0x9cf04975ULL
 };
+__device__ __constant__ unsigned long long Gy_d_fallback[4] = {
+    0xfb10d4b8ULL, 0x9c47d08fULL, 0xa6855419ULL, 0x483ada77ULL
+};
 
 // Host-side copy of c_p
 static const unsigned long long host_c_p[4] = {0xfffffc2fULL, 0xffffffffULL, 0xffffffffULL, 0xffffffffULL};
