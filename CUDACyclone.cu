@@ -299,7 +299,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMalloc(&d_valid, sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_debug_invalid_idx, sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_debug_invalid_point, 8 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_debug_field_result, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_debug_field_result, 8 * sizeof(unsigned long long)));
 
     // Initialize memory
     CUDA_CHECK(cudaMemset(d_counts256, 0, sizeof(unsigned long long)));
@@ -316,23 +316,46 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemset(d_valid, 1, sizeof(int)));
     CUDA_CHECK(cudaMemset(d_debug_invalid_idx, 0xFF, sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemset(d_debug_invalid_point, 0, 8 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_debug_field_result, 0, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_debug_field_result, 0, 8 * sizeof(unsigned long long)));
 
     // Set constants
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_hash160, target_hash160, 20 * sizeof(uint8_t)));
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_prefix, &target_prefix, sizeof(uint32_t)));
 
-    // Validate field arithmetic for phi_base
+    // Validate field arithmetic
     if (verbose) {
-        std::cout << "Validating field multiplication for phi_base on device...\n";
+        std::cout << "Validating field arithmetic on device...\n";
     }
-    debug_field_multiply_kernel<<<1, 1>>>(d_debug_field_result);
+    CUDA_CHECK(cudaMemset(d_valid, 1, sizeof(int)));
+    debug_field_arithmetic_kernel<<<1, 1>>>(d_debug_field_result, d_valid);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
-    unsigned long long h_field_result[4];
-    CUDA_CHECK(cudaMemcpy(h_field_result, d_debug_field_result, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
-    if (verbose) {
-        std::cout << "phi_x (Gx_d * c_beta_fallback mod p): " << CryptoUtils::formatHex256(h_field_result) << "\n";
+    int h_field_valid;
+    unsigned long long h_field_result[8];
+    CUDA_CHECK(cudaMemcpy(&h_field_valid, d_valid, sizeof(int), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_field_result, d_debug_field_result, 8 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    if (!h_field_valid) {
+        std::cerr << "Error: field arithmetic validation failed\n";
+        std::cerr << "y^2 mod p: " << CryptoUtils::formatHex256(h_field_result) << "\n";
+        std::cerr << "x^3 + 7 mod p: " << CryptoUtils::formatHex256(h_field_result + 4) << "\n";
+        CUDA_CHECK(cudaFree(d_start_scalars));
+        CUDA_CHECK(cudaFree(d_counts256));
+        CUDA_CHECK(cudaFree(d_P));
+        CUDA_CHECK(cudaFree(d_R));
+        CUDA_CHECK(cudaFree(d_found_flag));
+        CUDA_CHECK(cudaFree(d_found_result));
+        CUDA_CHECK(cudaFree(d_hashes_accum));
+        CUDA_CHECK(cudaFree(d_any_left));
+        CUDA_CHECK(cudaFree(d_pre_Gx_local));
+        CUDA_CHECK(cudaFree(d_pre_Gy_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGx_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGy_local));
+        CUDA_CHECK(cudaFree(d_debug_precompute));
+        CUDA_CHECK(cudaFree(d_valid));
+        CUDA_CHECK(cudaFree(d_debug_invalid_idx));
+        CUDA_CHECK(cudaFree(d_debug_invalid_point));
+        CUDA_CHECK(cudaFree(d_debug_field_result));
+        return EXIT_FAILURE;
     }
 
     // Precompute G tables
@@ -797,6 +820,11 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(d_pre_Gy_local));
     CUDA_CHECK(cudaFree(d_pre_phiGx_local));
     CUDA_CHECK(cudaFree(d_pre_phiGy_local));
+    CUDA_CHECK(cudaFree(d_debug_precompute));
+    CUDA_CHECK(cudaFree(d_valid));
+    CUDA_CHECK(cudaFree(d_debug_invalid_idx));
+    CUDA_CHECK(cudaFree(d_debug_invalid_point));
+    CUDA_CHECK(cudaFree(d_debug_field_result));
     CUDA_CHECK(cudaFreeHost(h_start_scalars));
     CUDA_CHECK(cudaStreamDestroy(streamKernel));
 

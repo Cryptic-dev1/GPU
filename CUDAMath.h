@@ -123,7 +123,7 @@ __host__ void fieldMul_host(const unsigned long long a[4], const unsigned long l
             temp[i + j] = (unsigned long long)prod;
             carry = (unsigned long long)(prod >> 64);
         }
-        temp[i + 4] += carry;
+        temp[i + 4] = carry;
     }
     for (int i = 0; i < 8; ++i) c[i] = temp[i];
 }
@@ -134,11 +134,19 @@ __host__ void fieldSqr_host(const unsigned long long a[4], unsigned long long c[
 
 __host__ void modred_barrett_host(const unsigned long long in[8], unsigned long long out[4]) {
     unsigned long long q[5], tmp[8];
+    // Compute q = floor(in * mu / 2^256)
     fieldMul_host(in + 4, host_c_mu, q);
+    // Compute tmp = q * p
     fieldMul_host(q, host_c_p, tmp);
+    // Compute out = in - tmp
     fieldSub_host(in, tmp, out);
-    if (ge256(out, host_c_p)) {
+    // Ensure out < p
+    while (ge256(out, host_c_p)) {
         fieldSub_host(out, host_c_p, out);
+    }
+    // Ensure out is non-negative
+    if (_IsNegative(out)) {
+        fieldAdd_host(out, host_c_p, out);
     }
 }
 
@@ -196,7 +204,7 @@ __device__ void fieldMul_opt_device(const unsigned long long a[4], const unsigne
             temp[i + j] = (unsigned long long)prod;
             carry = (unsigned long long)(prod >> 64);
         }
-        temp[i + 4] += carry;
+        temp[i + 4] = carry;
     }
     #pragma unroll
     for (int i = 0; i < 8; ++i) c[i] = temp[i];
@@ -384,6 +392,14 @@ __host__ bool isPointOnCurve(const unsigned long long x[4], const unsigned long 
     fieldMul_host(temp, x, x3); // x^3
     modred_barrett_host(x3, x3_plus_7);
     fieldAdd_host(x3_plus_7, seven, x3_plus_7); // x^3 + 7 mod p
+    std::ostringstream oss;
+    oss << std::hex << std::uppercase << std::setfill('0');
+    oss << "y^2 mod p: ";
+    for (int i = 3; i >= 0; --i) oss << std::setw(16) << result[i];
+    oss << "\nx^3 + 7 mod p: ";
+    for (int i = 3; i >= 0; --i) oss << std::setw(16) << x3_plus_7[i];
+    oss << "\n";
+    std::cout << oss.str();
     return _IsEqual(result, x3_plus_7);
 }
 
