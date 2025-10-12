@@ -1,4 +1,3 @@
-```cpp
 #ifndef CUDA_MATH_H
 #define CUDA_MATH_H
 
@@ -205,7 +204,7 @@ __host__ void mul256_host(const unsigned long long a[4], const unsigned long lon
     for (int i = 0; i < 4; ++i) {
         carry = 0;
         #pragma unroll
-        for (int j = 0; j < 4; ++j) {
+        for (int j = 0; j < 4; ++i) {
             unsigned long long ai = a[i];
             unsigned long long bj = b[j];
             __uint128_t prod = (__uint128_t)ai * bj;
@@ -241,7 +240,7 @@ __host__ void mul_high_host(const unsigned long long a[4], const unsigned long l
             hi = (unsigned long long)(prod >> 64);
             unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1ULL : 0ULL;
-            unsigned long long prod_ij = *(temp_prod + i + j);
+            unsigned long long prod_ij = *(temp_out + i + j);
             *(temp_prod + i + j) = prod_ij + sum;
             carry += (*(temp_prod + i + j) < prod_ij) ? 1ULL : 0ULL;
             unsigned long long prod_ij1 = *(temp_prod + i + j + 1);
