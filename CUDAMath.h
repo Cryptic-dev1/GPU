@@ -43,7 +43,7 @@ __device__ __constant__ unsigned long long Gy_d_fallback[4] = {
     0xfb10d4b8ULL, 0x9c47d08fULL, 0xa6855419ULL, 0x483ada77ULL
 };
 
-// Host-side copy of c_p
+// Host-side copy of c_p and c_mu
 static const unsigned long long host_c_p[4] = {0xfffffc2fULL, 0xffffffffULL, 0xffffffffULL, 0xffffffffULL};
 static const unsigned long long host_c_mu[5] = {0x1000003d1ULL, 0ULL, 0ULL, 0ULL, 1ULL};
 
@@ -119,11 +119,14 @@ __host__ void fieldMul_host(const unsigned long long a[4], const unsigned long l
     for (int i = 0; i < 4; ++i) {
         unsigned long long carry = 0;
         for (int j = 0; j < 4; ++j) {
-            __uint128_t prod = (__uint128_t)a[i] * b[j] + temp[i + j] + carry;
-            temp[i + j] = (unsigned long long)prod;
-            carry = (unsigned long long)(prod >> 64);
+            __uint128_t prod = (__uint128_t)a[i] * b[j];
+            unsigned long long lo = (unsigned long long)prod;
+            unsigned long long hi = (unsigned long long)(prod >> 64);
+            unsigned long long sum = temp[i + j] + lo + carry;
+            temp[i + j] = sum;
+            carry = hi + (sum < lo || (sum == lo && carry));
         }
-        temp[i + 4] = carry;
+        temp[i + 4] += carry;
     }
     for (int i = 0; i < 8; ++i) c[i] = temp[i];
 }
@@ -134,17 +137,12 @@ __host__ void fieldSqr_host(const unsigned long long a[4], unsigned long long c[
 
 __host__ void modred_barrett_host(const unsigned long long in[8], unsigned long long out[4]) {
     unsigned long long q[5], tmp[8];
-    // Compute q = floor(in * mu / 2^256)
-    fieldMul_host(in + 4, host_c_mu, q);
-    // Compute tmp = q * p
-    fieldMul_host(q, host_c_p, tmp);
-    // Compute out = in - tmp
-    fieldSub_host(in, tmp, out);
-    // Ensure out < p
+    fieldMul_host(in + 4, host_c_mu, q); // q = (in >> 256) * mu
+    fieldMul_host(q, host_c_p, tmp); // tmp = q * p
+    fieldSub_host(in, tmp, out); // out = in - q * p
     while (ge256(out, host_c_p)) {
         fieldSub_host(out, host_c_p, out);
     }
-    // Ensure out is non-negative
     if (_IsNegative(out)) {
         fieldAdd_host(out, host_c_p, out);
     }
@@ -200,11 +198,14 @@ __device__ void fieldMul_opt_device(const unsigned long long a[4], const unsigne
         unsigned long long carry = 0;
         #pragma unroll
         for (int j = 0; j < 4; ++j) {
-            __uint128_t prod = (__uint128_t)a[i] * b[j] + temp[i + j] + carry;
-            temp[i + j] = (unsigned long long)prod;
-            carry = (unsigned long long)(prod >> 64);
+            __uint128_t prod = (__uint128_t)a[i] * b[j];
+            unsigned long long lo = (unsigned long long)prod;
+            unsigned long long hi = (unsigned long long)(prod >> 64);
+            unsigned long long sum = temp[i + j] + lo + carry;
+            temp[i + j] = sum;
+            carry = hi + (sum < lo || (sum == lo && carry));
         }
-        temp[i + 4] = carry;
+        temp[i + 4] += carry;
     }
     #pragma unroll
     for (int i = 0; i < 8; ++i) c[i] = temp[i];
@@ -217,6 +218,9 @@ __device__ void modred_barrett_opt_device(const unsigned long long in[8], unsign
     fieldSub_opt_device(in, tmp, out);
     if (ge256(out, c_p)) {
         fieldSub_opt_device(out, c_p, out);
+    }
+    if (_IsNegative(out)) {
+        fieldAdd_opt_device(out, c_p, out);
     }
 }
 
@@ -392,14 +396,6 @@ __host__ bool isPointOnCurve(const unsigned long long x[4], const unsigned long 
     fieldMul_host(temp, x, x3); // x^3
     modred_barrett_host(x3, x3_plus_7);
     fieldAdd_host(x3_plus_7, seven, x3_plus_7); // x^3 + 7 mod p
-    std::ostringstream oss;
-    oss << std::hex << std::uppercase << std::setfill('0');
-    oss << "y^2 mod p: ";
-    for (int i = 3; i >= 0; --i) oss << std::setw(16) << result[i];
-    oss << "\nx^3 + 7 mod p: ";
-    for (int i = 3; i >= 0; --i) oss << std::setw(16) << x3_plus_7[i];
-    oss << "\n";
-    std::cout << oss.str();
     return _IsEqual(result, x3_plus_7);
 }
 
@@ -447,14 +443,6 @@ __global__ void debug_field_arithmetic_kernel(unsigned long long* result, int* v
         *valid = _IsEqual(result_y2, x3_plus_7);
         fieldCopy(result_y2, result);
         fieldCopy(x3_plus_7, result + 4);
-    }
-}
-
-__global__ void debug_field_multiply_kernel(unsigned long long* result) {
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        unsigned long long temp[8];
-        fieldMul_opt_device(Gx_d, c_beta_fallback, temp);
-        modred_barrett_opt_device(temp, result);
     }
 }
 

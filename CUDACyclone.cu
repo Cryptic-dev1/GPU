@@ -267,11 +267,36 @@ int main(int argc, char* argv[]) {
         std::cerr << "Warning: c_beta in CUDAStructures.h is incorrect, using c_beta_fallback\n";
     }
 
-    // Validate base point on host
+    // Validate base point on host with debugging
     if (verbose) {
         std::cout << "Validating base point on host...\n";
     }
-    if (!isPointOnCurve(h_Gx_d, h_Gy_d)) {
+    unsigned long long y2[8], x3[8], seven[4] = {7ULL, 0ULL, 0ULL, 0ULL}, temp[8], result[4], x3_plus_7[4];
+    fieldSqr_host(h_Gy_d, y2);
+    if (verbose) {
+        std::cout << "y^2 (raw): " << CryptoUtils::formatHex256(y2) << CryptoUtils::formatHex256(y2 + 4) << "\n";
+    }
+    modred_barrett_host(y2, result); // y^2 mod p
+    if (verbose) {
+        std::cout << "y^2 mod p: " << CryptoUtils::formatHex256(result) << "\n";
+    }
+    fieldSqr_host(h_Gx_d, temp);
+    if (verbose) {
+        std::cout << "x^2 (raw): " << CryptoUtils::formatHex256(temp) << CryptoUtils::formatHex256(temp + 4) << "\n";
+    }
+    fieldMul_host(temp, h_Gx_d, x3); // x^3
+    if (verbose) {
+        std::cout << "x^3 (raw): " << CryptoUtils::formatHex256(x3) << CryptoUtils::formatHex256(x3 + 4) << "\n";
+    }
+    modred_barrett_host(x3, x3_plus_7);
+    if (verbose) {
+        std::cout << "x^3 mod p: " << CryptoUtils::formatHex256(x3_plus_7) << "\n";
+    }
+    fieldAdd_host(x3_plus_7, seven, x3_plus_7); // x^3 + 7 mod p
+    if (verbose) {
+        std::cout << "x^3 + 7 mod p: " << CryptoUtils::formatHex256(x3_plus_7) << "\n";
+    }
+    if (!_IsEqual(result, x3_plus_7)) {
         std::cerr << "Error: base point (Gx_d, Gy_d) is not on the secp256k1 curve\n";
         return EXIT_FAILURE;
     }
