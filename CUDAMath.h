@@ -686,7 +686,6 @@ __device__ void split_glv(const unsigned long long scalar[4], unsigned long long
     }
 }
 
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
 __host__ __device__ void pointSetInfinity(JacobianPoint &P) {
     fieldSetZero(P.x);
     fieldSetZero(P.y);
