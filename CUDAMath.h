@@ -246,22 +246,29 @@ __device__ void pointDoubleJacobian(JacobianPoint* P, JacobianPoint* R) {
     fieldCopy(Pz, P->z);
     fieldSqr_opt_device(Pz, z2);
     fieldSqr_opt_device(z2, z4);
-    fieldMul_opt_device(Px, z2, t1);
-    fieldAdd_opt_device(t1, t1, t2, &borrow);
-    fieldMul_opt_device(t2, t2, t3);
+    unsigned long long Px_z2[4];
+    fieldMul_opt_device(Px, z2, Px_z2);
+    fieldAdd_opt_device(Px_z2, Px_z2, t2, &borrow);
+    unsigned long long t2_squared[4];
+    fieldMul_opt_device(t2, t2, t2_squared);
     fieldSub_opt_device(Px, z4, t4, &borrow);
-    fieldAdd_opt_device(Px, z4, t1, &borrow);
-    fieldMul_opt_device(t4, t1, t2);
-    fieldMul_opt_device(t2, t3, t1);
-    fieldSqr_opt_device(t3, t2);
-    fieldSub_opt_device(t2, t1, R->x, &borrow);
-    fieldSub_opt_device(t1, R->x, t2, &borrow);
-    fieldMul_opt_device(t2, t3, t1);
-    fieldMul_opt_device(Py, z2, t2);
-    fieldMul_opt_device(t2, Pz, R->z);
-    fieldMul_opt_device(Py, Py, t3);
-    fieldMul_opt_device(t3, z4, t4);
-    fieldSub_opt_device(t1, t4, R->y, &borrow);
+    unsigned long long Px_z4[4];
+    fieldAdd_opt_device(Px, z4, Px_z4, &borrow);
+    fieldMul_opt_device(t4, Px_z4, t1);
+    fieldMul_opt_device(t1, t2_squared, t2);
+    fieldSqr_opt_device(t2_squared, t3);
+    fieldSub_opt_device(t3, t2, R->x, &borrow);
+    fieldSub_opt_device(t2, R->x, t1, &borrow);
+    unsigned long long t1_t2[4];
+    fieldMul_opt_device(t1, t2_squared, t1_t2);
+    unsigned long long Py_z2[4];
+    fieldMul_opt_device(Py, z2, Py_z2);
+    fieldMul_opt_device(Py_z2, Pz, R->z);
+    unsigned long long Py_squared[4];
+    fieldMul_opt_device(Py, Py, Py_squared);
+    unsigned long long Py_squared_z4[4];
+    fieldMul_opt_device(Py_squared, z4, Py_squared_z4);
+    fieldSub_opt_device(t1_t2, Py_squared_z4, R->y, &borrow);
     R->infinity = false;
 }
 
@@ -297,19 +304,23 @@ __device__ void pointAddJacobian(const JacobianPoint* P, const JacobianPoint* Q,
     fieldMul_opt_device(Qy, z1z1, s2);
     fieldSub_opt_device(u2, u1, h, &borrow);
     fieldSqr_opt_device(h, i);
-    fieldMul_opt_device(h, i, j);
+    unsigned long long h_i[4];
+    fieldMul_opt_device(h, i, h_i);
     fieldSub_opt_device(s2, s1, r, &borrow);
     unsigned long long r_squared[4];
     fieldSqr_opt_device(r, r_squared);
-    fieldMul_opt_device(u1, i, v);
-    fieldSqr_opt_device(r_squared, R->x);
-    fieldSub_opt_device(R->x, j, R->x, &borrow);
-    fieldSub_opt_device(R->x, v, R->x, &borrow);
-    fieldSub_opt_device(v, R->x, v, &borrow);
+    unsigned long long u1_i[4];
+    fieldMul_opt_device(u1, i, u1_i);
+    unsigned long long Rx_temp[4];
+    fieldSqr_opt_device(r_squared, Rx_temp);
+    fieldSub_opt_device(Rx_temp, h_i, Rx_temp, &borrow);
+    fieldSub_opt_device(Rx_temp, u1_i, R->x, &borrow);
+    fieldSub_opt_device(u1_i, R->x, v, &borrow);
     unsigned long long s1_j[4];
-    fieldMul_opt_device(s1, j, s1_j);
-    fieldMul_opt_device(v, r_squared, v);
-    fieldSub_opt_device(v, s1_j, R->y, &borrow);
+    fieldMul_opt_device(s1, h_i, s1_j);
+    unsigned long long v_r[4];
+    fieldMul_opt_device(v, r_squared, v_r);
+    fieldSub_opt_device(v_r, s1_j, R->y, &borrow);
     unsigned long long Pz_Qz[4];
     fieldMul_opt_device(Pz, Qz, Pz_Qz);
     fieldMul_opt_device(Pz_Qz, h, R->z);
@@ -343,26 +354,30 @@ __device__ void pointAddMixed(const JacobianPoint* P, const unsigned long long Q
     fieldMul_opt_device(Qy_copy, z1z1, s2);
     fieldSub_opt_device(u2, Px, h, &borrow);
     fieldSqr_opt_device(h, i);
-    fieldMul_opt_device(h, i, j);
+    unsigned long long h_i[4];
+    fieldMul_opt_device(h, i, h_i);
     fieldSub_opt_device(s2, Py, r, &borrow);
     unsigned long long r_squared[4];
     fieldSqr_opt_device(r, r_squared);
-    fieldMul_opt_device(Px, i, v);
-    fieldSqr_opt_device(r_squared, R->x);
-    fieldSub_opt_device(R->x, j, R->x, &borrow);
-    fieldSub_opt_device(R->x, v, R->x, &borrow);
-    fieldSub_opt_device(v, R->x, v, &borrow);
+    unsigned long long Px_i[4];
+    fieldMul_opt_device(Px, i, Px_i);
+    unsigned long long Rx_temp[4];
+    fieldSqr_opt_device(r_squared, Rx_temp);
+    fieldSub_opt_device(Rx_temp, h_i, Rx_temp, &borrow);
+    fieldSub_opt_device(Rx_temp, Px_i, R->x, &borrow);
+    fieldSub_opt_device(Px_i, R->x, v, &borrow);
     unsigned long long Py_j[4];
-    fieldMul_opt_device(Py, j, Py_j);
-    fieldMul_opt_device(v, r_squared, v);
-    fieldSub_opt_device(v, Py_j, R->y, &borrow);
+    fieldMul_opt_device(Py, h_i, Py_j);
+    unsigned long long v_r[4];
+    fieldMul_opt_device(v, r_squared, v_r);
+    fieldSub_opt_device(v_r, Py_j, R->y, &borrow);
     fieldMul_opt_device(Pz, h, R->z);
     R->infinity = false;
 
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         printf("pointAddMixed: z1z1=%llx:%llx:%llx:%llx, u2=%llx:%llx:%llx:%llx, s2=%llx:%llx:%llx:%llx, h=%llx:%llx:%llx:%llx, i=%llx:%llx:%llx:%llx, j=%llx:%llx:%llx:%llx, r=%llx:%llx:%llx:%llx, v=%llx:%llx:%llx:%llx\n",
                z1z1[0], z1z1[1], z1z1[2], z1z1[3], u2[0], u2[1], u2[2], u2[3], s2[0], s2[1], s2[2], s2[3],
-               h[0], h[1], h[2], h[3], i[0], i[1], i[2], i[3], j[0], j[1], j[2], j[3], r[0], r[1], r[2], r[3], v[0], v[1], v[2], v[3]);
+               h[0], h[1], h[2], h[3], i[0], i[1], i[2], i[3], h_i[0], h_i[1], h_i[2], h_i[3], r[0], r[1], r[2], r[3], v[0], v[1], v[2], v[3]);
         printf("pointAddMixed: output R.x=%llx:%llx:%llx:%llx, R.y=%llx:%llx:%llx:%llx, R.z=%llx:%llx:%llx:%llx, R.infinity=%d\n",
                R->x[0], R->x[1], R->x[2], R->x[3], R->y[0], R->y[1], R->y[2], R->y[3], R->z[0], R->z[1], R->z[2], R->z[3], R->infinity);
     }
