@@ -64,6 +64,17 @@ __host__ __device__ __forceinline__ bool isZero256(const unsigned long long a[4]
 #define __sright128(a, b, n) ((a) >> (n)) | ((b) << (64 - (n)))
 #define __sleft128(a, b, n) ((b) << (n)) | ((a) >> (64 - (n)))
 
+// Field Utility Functions (Host and Device)
+__host__ __device__ void fieldCopy(const unsigned long long a[4], unsigned long long b[4]) {
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) b[i] = a[i];
+}
+
+__host__ __device__ void fieldSetZero(unsigned long long a[4]) {
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) a[i] = 0ULL;
+}
+
 // Host Field Utility Functions
 __host__ void fieldAdd_host(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
     unsigned long long carry = 0;
@@ -132,16 +143,6 @@ __host__ void modred_barrett_host(const unsigned long long in[8], unsigned long 
 }
 
 // Device Field Utility Functions
-__host__ __device__ void fieldSetZero(unsigned long long a[4]) {
-    #pragma unroll
-    for (int i = 0; i < 4; ++i) a[i] = 0ULL;
-}
-
-__host__ __device__ void fieldCopy(const unsigned long long a[4], unsigned long long b[4]) {
-    #pragma unroll
-    for (int i = 0; i < 4; ++i) b[i] = a[i];
-}
-
 __device__ void fieldAdd_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
     unsigned long long carry = 0;
     #pragma unroll
