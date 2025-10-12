@@ -239,14 +239,14 @@ __device__ void pointDoubleJacobian(JacobianPoint* P, JacobianPoint* R) {
         return;
     }
     unsigned long long z2[4], z4[4], t1[4], t2[4], t3[4], t4[4];
-    bool carry, borrow;
+    bool borrow;
     fieldSqr_opt_device(P->z, z2);
     fieldSqr_opt_device(z2, z4);
     fieldMul_opt_device(P->x, z2, t1);
-    fieldAdd_opt_device(t1, t1, t2, &carry);
+    fieldAdd_opt_device(t1, t1, t2, &borrow);
     fieldMul_opt_device(t2, t2, t3);
     fieldSub_opt_device(P->x, z4, t4, &borrow);
-    fieldAdd_opt_device(P->x, z4, t1, &carry);
+    fieldAdd_opt_device(P->x, z4, t1, &borrow);
     fieldMul_opt_device(t4, t1, t2);
     fieldMul_opt_device(t2, t3, t1);
     fieldSqr_opt_device(t3, t2);
@@ -277,13 +277,19 @@ __device__ void pointAddJacobian(const JacobianPoint* P, const JacobianPoint* Q,
         return;
     }
     unsigned long long z1z1[4], z2z2[4], u1[4], u2[4], s1[4], s2[4], h[4], i[4], j[4], r[4], v[4];
-    bool carry, borrow;
+    bool borrow;
     fieldSqr_opt_device(P->z, z1z1);
     fieldSqr_opt_device(Q->z, z2z2);
-    fieldMul_opt_device(P->x, z2z2, u1);
-    fieldMul_opt_device(Q->x, z1z1, u2);
-    fieldMul_opt_device(P->y, z2z2, s1);
-    fieldMul_opt_device(Q->y, z1z1, s2);
+    // Copy const inputs to non-const arrays to allow modification
+    unsigned long long Px[4], Py[4], Qx[4], Qy[4];
+    fieldCopy(Px, P->x);
+    fieldCopy(Py, P->y);
+    fieldCopy(Qx, Q->x);
+    fieldCopy(Qy, Q->y);
+    fieldMul_opt_device(Px, z2z2, u1);
+    fieldMul_opt_device(Qx, z1z1, u2);
+    fieldMul_opt_device(Py, z2z2, s1);
+    fieldMul_opt_device(Qy, z1z1, s2);
     fieldSub_opt_device(u2, u1, h, &borrow);
     fieldSqr_opt_device(h, i);
     fieldMul_opt_device(h, i, j);
@@ -317,21 +323,27 @@ __device__ void pointAddMixed(const JacobianPoint* P, const unsigned long long Q
         return;
     }
     unsigned long long z1z1[4], u2[4], s2[4], h[4], i[4], j[4], r[4], v[4];
-    bool carry, borrow;
+    bool borrow;
     fieldSqr_opt_device(P->z, z1z1);
-    fieldMul_opt_device(Qx, z1z1, u2);
-    fieldMul_opt_device(Qy, z1z1, s2);
-    fieldSub_opt_device(u2, P->x, h, &borrow);
+    // Copy const inputs to non-const arrays to allow modification
+    unsigned long long Qx_copy[4], Qy_copy[4], Px[4], Py[4];
+    fieldCopy(Qx_copy, Qx);
+    fieldCopy(Qy_copy, Qy);
+    fieldCopy(Px, P->x);
+    fieldCopy(Py, P->y);
+    fieldMul_opt_device(Qx_copy, z1z1, u2);
+    fieldMul_opt_device(Qy_copy, z1z1, s2);
+    fieldSub_opt_device(u2, Px, h, &borrow);
     fieldSqr_opt_device(h, i);
     fieldMul_opt_device(h, i, j);
-    fieldSub_opt_device(s2, P->y, r, &borrow);
+    fieldSub_opt_device(s2, Py, r, &borrow);
     fieldMul_opt_device(r, r, r);
-    fieldMul_opt_device(P->x, i, v);
+    fieldMul_opt_device(Px, i, v);
     fieldSqr_opt_device(r, R->x);
     fieldSub_opt_device(R->x, j, R->x, &borrow);
     fieldSub_opt_device(R->x, v, R->x, &borrow);
     fieldSub_opt_device(v, R->x, v, &borrow);
-    fieldMul_opt_device(P->y, j, s2);
+    fieldMul_opt_device(Py, j, s2);
     fieldMul_opt_device(v, r, v);
     fieldSub_opt_device(v, s2, R->y, &borrow);
     fieldMul_opt_device(P->z, h, R->z);

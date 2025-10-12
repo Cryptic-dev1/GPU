@@ -42,7 +42,7 @@ __host__ void add256_u64(const unsigned long long a[4], unsigned long long b, un
 __host__ bool decode_p2pkh_address(const std::string& address, uint8_t hash160[20]);
 __host__ long double ld_from_u256(const unsigned long long a[4]);
 
-// Declaration for getHash160_33_from_limbs (assumed defined in CUDAHash.cu)
+// Declaration for getHash160_33_from_limbs (defined in CUDAHash.cu)
 __device__ void getHash160_33_from_limbs(uint8_t prefix, const unsigned long long x[4], uint8_t h20[20]);
 
 // Namespace for utility functions
@@ -158,6 +158,8 @@ __global__ void fused_ec_hash(
     unsigned long long x_affine[BATCH_SIZE * 4];
     unsigned long long y_affine[BATCH_SIZE * 4];
     unsigned long long prefix[(BATCH_SIZE + 1) * 4];
+    uint8_t pubkeys[BATCH_SIZE * 33];
+    uint8_t hashes[BATCH_SIZE * 20];
 
     if (lane < BATCH_SIZE / 2) {
         int local_idx = idx % (BATCH_SIZE / 2);
@@ -186,15 +188,25 @@ __global__ void fused_ec_hash(
         fieldCopy(z_inv, prefix + (local_idx + 1) * 4);
         fieldMul_opt_device(P + idx * 8, z_inv, x_affine + idx * 4);
         fieldMul_opt_device(P + idx * 8 + 4, z_inv, y_affine + idx * 4);
+        // Construct public key
+        pubkeys[local_idx * 33] = (y_affine[idx * 4] & 1ULL) ? 0x03 : 0x02;
+        for (int i = 0; i < 4; ++i) {
+            unsigned long long v = x_affine[idx * 4 + (3 - i)];
+            pubkeys[local_idx * 33 + 1 + i * 8] = (uint8_t)(v >> 56);
+            pubkeys[local_idx * 33 + 2 + i * 8] = (uint8_t)(v >> 48);
+            pubkeys[local_idx * 33 + 3 + i * 8] = (uint8_t)(v >> 40);
+            pubkeys[local_idx * 33 + 4 + i * 8] = (uint8_t)(v >> 32);
+            pubkeys[local_idx * 33 + 5 + i * 8] = (uint8_t)(v >> 24);
+            pubkeys[local_idx * 33 + 6 + i * 8] = (uint8_t)(v >> 16);
+            pubkeys[local_idx * 33 + 7 + i * 8] = (uint8_t)(v >> 8);
+            pubkeys[local_idx * 33 + 8 + i * 8] = (uint8_t)(v >> 0);
+        }
     }
     __syncthreads();
 
-    uint8_t pubkeys[BATCH_SIZE * 33];
-    uint8_t hashes[BATCH_SIZE * 20];
     if (lane < BATCH_SIZE / 2) {
         int local_idx = idx % (BATCH_SIZE / 2);
-        uint8_t prefix = (y_affine[idx * 4] & 1ULL) ? 0x03 : 0x02;
-        getHash160_33_from_limbs(prefix, x_affine + idx * 4, hashes + local_idx * 20);
+        getHash160_33_from_limbs(pubkeys[local_idx * 33], x_affine + idx * 4, hashes + local_idx * 20);
         if (hash160_matches_prefix_then_full(hashes + local_idx * 20, c_target_hash160, c_target_prefix)) {
             int old = atomicCAS(found_flag, FOUND_NONE, FOUND_LOCK);
             if (old == FOUND_NONE) {
@@ -256,6 +268,9 @@ int main(int argc, char* argv[]) {
 
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_hash160, target_hash160, 20 * sizeof(uint8_t)));
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_prefix, &target_prefix, sizeof(uint32_t)));
+
+    // Set up signal handler
+    signal(SIGINT, handle_sigint);
 
     if (verbose) {
         unsigned long long h_n[4], h_beta[4], h_b1[4], h_b2[4], h_a1[4], h_a2[4], h_p[4], h_mu[5];
