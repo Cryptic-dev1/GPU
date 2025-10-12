@@ -284,7 +284,6 @@ int main(int argc, char* argv[]) {
     unsigned long long h_hashes = 0;
     auto t0 = std::chrono::steady_clock::now();
     auto tLast = t0;
-    unsigned long long lastHashes = 0;
 
     signal(SIGINT, handle_sigint);
     while (!stop_all && !g_sigint) {
@@ -310,7 +309,6 @@ int main(int argc, char* argv[]) {
                       << " Mkeys/s | Count: " << h_hashes
                       << " | Progress: " << std::fixed << std::setprecision(2) << (double)prog << " %";
             std::cout.flush();
-            lastHashes = h_hashes;
             tLast = now;
         }
 

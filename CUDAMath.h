@@ -70,13 +70,22 @@ __host__ __device__ void fieldCopy(const unsigned long long a[4], unsigned long 
 
 __device__ void fieldAdd_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
     unsigned long long carry = 0;
-    #pragma unroll
-    for (int i = 0; i < 4; ++i) {
-        unsigned long long temp;
-        UADDO(temp, a[i], b[i]);
-        UADD(c[i], temp, carry);
-        carry = (temp < a[i] || (temp == a[i] && carry)) ? 1ULL : 0ULL;
-    }
+    unsigned long long temp;
+    UADDO(temp, a[0], b[0]);
+    c[0] = temp;
+    carry = (temp < a[0]) ? 1ULL : 0ULL;
+    UADDC(temp, a[1], b[1]);
+    UADD(temp, temp, carry);
+    c[1] = temp;
+    carry = (temp < a[1] || (temp == a[1] && carry)) ? 1ULL : 0ULL;
+    UADDC(temp, a[2], b[2]);
+    UADD(temp, temp, carry);
+    c[2] = temp;
+    carry = (temp < a[2] || (temp == a[2] && carry)) ? 1ULL : 0ULL;
+    UADDC(temp, a[3], b[3]);
+    UADD(temp, temp, carry);
+    c[3] = temp;
+    carry = (temp < a[3] || (temp == a[3] && carry)) ? 1ULL : 0ULL;
     if (carry || ge256(c, c_p)) {
         unsigned long long temp[4];
         fieldCopy(c, temp);
@@ -161,7 +170,7 @@ __device__ void pointDoubleJacobian(JacobianPoint &P, JacobianPoint &R) {
         R.infinity = true;
         return;
     }
-    unsigned long long t1[8], t2[8], t3[4], t4[4], t5[4];
+    unsigned long long t1[8], t3[4], t4[4], t5[4];
     fieldSqr_opt_device(P.z, t1);
     modred_barrett_opt_device(t1, t3); // t3 = z^2
     fieldMul_opt_device(P.x, t3, t1);
@@ -206,7 +215,7 @@ __device__ void pointAddJacobian(const JacobianPoint &P, const JacobianPoint &Q,
         R.infinity = P.infinity;
         return;
     }
-    unsigned long long t1[8], t2[8], t3[4], t4[4], t5[4];
+    unsigned long long t1[8], t3[4], t4[4], t5[4];
     fieldSqr_opt_device(Q.z, t1);
     modred_barrett_opt_device(t1, t3); // t3 = Q.z^2
     fieldMul_opt_device(P.x, t3, t1);
