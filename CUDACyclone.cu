@@ -86,10 +86,10 @@ __device__ __forceinline__ int load_found_flag_relaxed(const int* p) {
     return *((const volatile int*)p);
 }
 
-__device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found_flag, unsigned full_mask, unsigned lane) {
+__device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found_flag, unsigned /*full_mask*/, unsigned lane) {
     int f = 0;
     if (lane == 0) f = load_found_flag_relaxed(d_found_flag);
-    f = __shfl_sync(full_mask, f, 0);
+    f = __shfl_sync(0xFFFFFFFF, f, 0);
     return f == FOUND_READY;
 }
 
@@ -107,14 +107,14 @@ __global__ void test_constant_memory(unsigned long long* out, int batch_size) {
     }
 }
 
-__global__ void compute_phi_base_kernel(JacobianPoint base, JacobianPoint &phi_base) {
+__global__ void compute_phi_base_kernel(JacobianPoint base, JacobianPoint* phi_base) {
     unsigned long long tmp[8];
     unsigned long long tmp2[8];
     fieldMul_opt_device(c_beta, base.x, tmp);
     modred_barrett_opt_device(tmp, tmp2);
-    fieldCopy(tmp2, phi_base.x);
-    fieldCopy(base.y, phi_base.y);
-    phi_base.infinity = base.infinity;
+    fieldCopy(tmp2, phi_base->x);
+    fieldCopy(base.y, phi_base->y);
+    phi_base->infinity = base.infinity;
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         printf("compute_phi_base_kernel completed\n");
     }
@@ -126,6 +126,8 @@ void precompute_g_table_gpu(JacobianPoint base, unsigned long long* pre_x, unsig
     CUDA_CHECK(cudaStreamSynchronize(stream));
     CUDA_CHECK(cudaGetLastError());
 }
+
+#define BATCH_SIZE 8 // Constant to replace runtime batch_size
 
 __global__ void fused_ec_hash(
     const unsigned long long* scalars,
@@ -143,7 +145,6 @@ __global__ void fused_ec_hash(
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int lane = threadIdx.x % WARP_SIZE;
-    unsigned full_mask = 0xFFFFFFFF;
 
     if (idx >= batch_size) return;
 
@@ -153,33 +154,34 @@ __global__ void fused_ec_hash(
     unsigned long long Rx[4], Ry[4];
     scalarMulBaseJacobian(my_scalar, Rx, Ry, pre_Gx, pre_Gy, pre_phiGx, pre_phiGy);
 
-    unsigned long long z_values[batch_size * 4];
-    unsigned long long x_affine[batch_size * 4];
-    unsigned long long y_affine[batch_size * 4];
-    unsigned long long prefix[batch_size * 4 + 4];
+    unsigned long long z_values[BATCH_SIZE * 4];
+    unsigned long long x_affine[BATCH_SIZE * 4];
+    unsigned long long y_affine[BATCH_SIZE * 4];
+    unsigned long long prefix[(BATCH_SIZE + 1) * 4];
 
-    if (lane < batch_size / 2) {
-        int batch_idx = idx / (batch_size / 2);
-        int local_idx = idx % (batch_size / 2);
+    if (lane < BATCH_SIZE / 2) {
+        int local_idx = idx % (BATCH_SIZE / 2);
         fieldCopy(Rx, P + idx * 8);
         fieldCopy(Ry, P + idx * 8 + 4);
-        fieldCopy(Ry, z_values + (batch_idx * (batch_size / 2) + local_idx) * 4); // Using Ry as z for testing
+        fieldCopy(Ry, z_values + local_idx * 4); // Using Ry as z for testing
         if (lane == 0) {
             printf("fused_ec_hash: Block %d, lane %d, writing z_values[%d]=%llx:%llx:%llx:%llx\n",
-                   blockIdx.x, lane, batch_idx * (batch_size / 2) + local_idx,
-                   z_values[(batch_idx * (batch_size / 2) + local_idx) * 4],
-                   z_values[(batch_idx * (batch_size / 2) + local_idx) * 4 + 1],
-                   z_values[(batch_idx * (batch_size / 2) + local_idx) * 4 + 2],
-                   z_values[(batch_idx * (batch_size / 2) + local_idx) * 4 + 3]);
+                   blockIdx.x, lane, local_idx,
+                   z_values[local_idx * 4],
+                   z_values[local_idx * 4 + 1],
+                   z_values[local_idx * 4 + 2],
+                   z_values[local_idx * 4 + 3]);
         }
     }
     __syncthreads();
 
-    batch_modinv_fermat(z_values, batch_size / 2, prefix);
+    if (lane < BATCH_SIZE / 2) {
+        batch_modinv_fermat(z_values, BATCH_SIZE / 2, prefix);
+    }
+    __syncthreads();
 
-    if (lane < batch_size / 2) {
-        int batch_idx = idx / (batch_size / 2);
-        int local_idx = idx % (batch_size / 2);
+    if (lane < BATCH_SIZE / 2) {
+        int local_idx = idx % (BATCH_SIZE / 2);
         unsigned long long z_inv[4];
         fieldCopy(z_inv, prefix + (local_idx + 1) * 4);
         fieldMul_opt_device(P + idx * 8, z_inv, x_affine + idx * 4);
@@ -187,14 +189,13 @@ __global__ void fused_ec_hash(
     }
     __syncthreads();
 
-    uint8_t pubkeys[batch_size * 33];
-    uint8_t hashes[batch_size * 20];
-    if (lane < batch_size / 2) {
-        int batch_idx = idx / (batch_size / 2);
-        int local_idx = idx % (batch_size / 2);
+    uint8_t pubkeys[BATCH_SIZE * 33];
+    uint8_t hashes[BATCH_SIZE * 20];
+    if (lane < BATCH_SIZE / 2) {
+        int local_idx = idx % (BATCH_SIZE / 2);
         uint8_t prefix = (y_affine[idx * 4] & 1ULL) ? 0x03 : 0x02;
-        getHash160_33_from_limbs(prefix, x_affine + idx * 4, hashes + (batch_idx * (batch_size / 2) + local_idx) * 20);
-        if (hash160_matches_prefix_then_full(hashes + (batch_idx * (batch_size / 2) + local_idx) * 20, c_target_hash160, c_target_prefix)) {
+        getHash160_33_from_limbs(prefix, x_affine + idx * 4, hashes + local_idx * 20);
+        if (hash160_matches_prefix_then_full(hashes + local_idx * 20, c_target_hash160, c_target_prefix)) {
             int old = atomicCAS(found_flag, FOUND_NONE, FOUND_LOCK);
             if (old == FOUND_NONE) {
                 found_result->threadId = idx;
@@ -208,7 +209,7 @@ __global__ void fused_ec_hash(
     }
     __syncthreads();
 
-    unsigned long long my_hashes = (lane < batch_size / 2) ? 1ULL : 0ULL;
+    unsigned long long my_hashes = (lane < BATCH_SIZE / 2) ? 1ULL : 0ULL;
     my_hashes = warp_reduce_add_ull(my_hashes);
     if (lane == 0) {
         atomicAdd(hashes_accum, my_hashes);
@@ -290,7 +291,7 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "Parsed grid: blocks=" << BLOCKS << ", threadsPerBlock=" << THREADS << "\n";
 
-    int batch_size = 8;
+    int batch_size = BATCH_SIZE;
     if (batch_size > MAX_BATCH_SIZE) batch_size = MAX_BATCH_SIZE;
     int batches_per_sm = (prop.multiProcessorCount * prop.maxThreadsPerMultiProcessor) / (BLOCKS * THREADS);
     std::cout << "ThreadsPerBlock      : " << THREADS << "\n";
@@ -343,7 +344,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaStreamCreate(&streamKernel));
 
     JacobianPoint phi_base;
-    compute_phi_base_kernel<<<1, 1, 0, streamKernel>>>(G, phi_base);
+    compute_phi_base_kernel<<<1, 1, 0, streamKernel>>>(G, &phi_base);
     CUDA_CHECK(cudaStreamSynchronize(streamKernel));
     CUDA_CHECK(cudaGetLastError());
 
@@ -383,12 +384,11 @@ int main(int argc, char* argv[]) {
     unsigned long long h_hashes = 0;
     auto t0 = std::chrono::high_resolution_clock::now();
     auto tLast = t0;
-    unsigned long long lastHashes = 0;
     bool completed_all = false;
     bool stop_all = false;
 
     while (!completed_all && !stop_all && !g_sigint) {
-        fused_ec_hash<<<BLOCKS, THREADS, batch_size * 20 * sizeof(uint32_t), streamKernel>>>(d_start_scalars, d_P, d_R, batch_size, d_pre_Gx_local, d_pre_Gy_local, d_pre_phiGx_local, d_pre_phiGy_local, d_hashes_accum, d_any_left, d_found_flag, d_found_result);
+        fused_ec_hash<<<BLOCKS, THREADS, BATCH_SIZE * 20 * sizeof(uint32_t), streamKernel>>>(d_start_scalars, d_P, d_R, batch_size, d_pre_Gx_local, d_pre_Gy_local, d_pre_phiGx_local, d_pre_phiGy_local, d_hashes_accum, d_any_left, d_found_flag, d_found_result);
         CUDA_CHECK(cudaGetLastError());
 
         auto now = std::chrono::high_resolution_clock::now();
@@ -407,7 +407,6 @@ int main(int argc, char* argv[]) {
                       << " Mkeys/s | Count: " << h_hashes
                       << " | Progress: " << std::fixed << std::setprecision(2) << (double)prog << " %";
             std::cout.flush();
-            lastHashes = h_hashes;
             tLast = now;
         }
 
@@ -421,11 +420,11 @@ int main(int argc, char* argv[]) {
         cudaError_t qs = cudaStreamQuery(streamKernel);
         if (qs == cudaSuccess) {
             // Debug output for public keys and hashes
-            unsigned long long h_P[batch_size * 4 * 2];
-            uint8_t h_hashes[batch_size * 20];
-            CUDA_CHECK(cudaMemcpy(h_P, d_P, batch_size * 4 * 2 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
-            CUDA_CHECK(cudaMemcpy(h_hashes, d_hashes, batch_size * 20 * sizeof(uint8_t), cudaMemcpyDeviceToHost));
-            for (int i = 0; i < batch_size; ++i) {
+            unsigned long long h_P[BATCH_SIZE * 4 * 2];
+            uint8_t h_hashes[BATCH_SIZE * 20];
+            CUDA_CHECK(cudaMemcpy(h_P, d_P, BATCH_SIZE * 4 * 2 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(h_hashes, d_hashes, BATCH_SIZE * 20 * sizeof(uint8_t), cudaMemcpyDeviceToHost));
+            for (int i = 0; i < BATCH_SIZE; ++i) {
                 printf("Batch %d: x=%llx:%llx:%llx:%llx, y=%llx:%llx:%llx:%llx, hash160=",
                        i, h_P[i*8], h_P[i*8+1], h_P[i*8+2], h_P[i*8+3],
                        h_P[i*8+4], h_P[i*8+5], h_P[i*8+6], h_P[i*8+7]);
