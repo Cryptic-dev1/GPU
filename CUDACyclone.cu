@@ -254,6 +254,11 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: Gx_d, Gy_d, or c_beta is zero\n";
         return EXIT_FAILURE;
     }
+    // Warn about incorrect c_beta
+    unsigned long long expected_c_beta[4] = {0x719501eeULL, 0xc1396c28ULL, 0x12f58995ULL, 0x9cf04975ULL};
+    if (!_IsEqual(h_c_beta, expected_c_beta)) {
+        std::cerr << "Warning: c_beta in CUDAStructures.h is incorrect, using c_beta_fallback\n";
+    }
 
     // Allocate memory
     unsigned long long *d_start_scalars, *d_counts256, *d_P, *d_R, *d_pre_Gx_local, *d_pre_Gy_local, *d_pre_phiGx_local, *d_pre_phiGy_local;
@@ -342,8 +347,11 @@ int main(int argc, char* argv[]) {
 
     // Precompute tables
     JacobianPoint base;
-    fieldCopy(Gx_d, base.x);
-    fieldCopy(Gy_d_fallback, base.y); // Use fallback Gy_d
+    unsigned long long h_Gx_d[4], h_Gy_d[4];
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_Gx_d, Gx_d, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_Gy_d, Gy_d, 4 * sizeof(unsigned long long)));
+    fieldCopy(h_Gx_d, base.x);
+    fieldCopy(h_Gy_d, base.y);
     fieldSetZero(base.z);
     base.z[0] = 1ULL;
     base.infinity = false;
