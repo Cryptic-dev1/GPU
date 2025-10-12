@@ -387,6 +387,20 @@ __host__ bool isPointOnCurve(const unsigned long long x[4], const unsigned long 
     return _IsEqual(result, x3_plus_7);
 }
 
+// Device curve validation kernel
+__global__ void validate_point_kernel(const unsigned long long* x, const unsigned long long* y, int* valid) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        unsigned long long y2[8], x3[8], seven[4] = {7ULL, 0ULL, 0ULL, 0ULL}, temp[8], result[4], x3_plus_7[4];
+        fieldSqr_opt_device(y, y2);
+        modred_barrett_opt_device(y2, result); // y^2 mod p
+        fieldSqr_opt_device(x, temp);
+        fieldMul_opt_device(temp, x, x3); // x^3
+        modred_barrett_opt_device(x3, x3_plus_7);
+        fieldAdd_opt_device(x3_plus_7, seven, x3_plus_7); // x^3 + 7 mod p
+        *valid = _IsEqual(result, x3_plus_7);
+    }
+}
+
 __global__ void scalarMulKernelBase(const unsigned long long* scalars_in, unsigned long long* outX, unsigned long long* outY, int N, unsigned long long* d_pre_Gx, unsigned long long* d_pre_Gy, unsigned long long* d_pre_phiGx, unsigned long long* d_pre_phiGy) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N || idx >= MAX_BATCH_SIZE) return;
@@ -411,8 +425,7 @@ __global__ void precompute_table_kernel(JacobianPoint base, unsigned long long* 
     unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
     JacobianPoint P = base;
-    // Limit iterations to 1 for debugging phi_base
-    unsigned long long max_bits = (idx == 0) ? 0 : 1;
+    unsigned long long max_bits = min(256ULL, size);
     for (unsigned long long bit = 0; bit < idx && bit < max_bits; ++bit) {
         if (bit % 2 == 0) {
             pointDoubleJacobian(P, P);
