@@ -263,8 +263,8 @@ int main(int argc, char* argv[]) {
     fieldSetZero(base.z);
     base.z[0] = 1ULL;
     base.infinity = false;
-    dim3 grid((PRECOMPUTE_SIZE + threadsPerBlock - 1) / threadsPerBlock);
-    precompute_table_kernel<<<grid, threadsPerBlock>>>(base, d_pre_Gx_local, d_pre_Gy_local, PRECOMPUTE_SIZE);
+    int precompute_blocks = (PRECOMPUTE_SIZE + threadsPerBlock - 1) / threadsPerBlock;
+    precompute_table_kernel<<<precompute_blocks, threadsPerBlock>>>(base, d_pre_Gx_local, d_pre_Gy_local, PRECOMPUTE_SIZE);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -274,7 +274,26 @@ int main(int argc, char* argv[]) {
     fieldSetZero(phi_base.z);
     phi_base.z[0] = 1ULL;
     phi_base.infinity = false;
-    precompute_table_kernel<<<grid, threadsPerBlock>>>(phi_base, d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE);
+    // Verify phi_base
+    if (isZero256(phi_base.x) || isZero256(phi_base.y)) {
+        std::cerr << "Error: phi_base initialization failed\n";
+        CUDA_CHECK(cudaFree(d_phi_x));
+        CUDA_CHECK(cudaFree(d_phi_y));
+        CUDA_CHECK(cudaFree(d_start_scalars));
+        CUDA_CHECK(cudaFree(d_counts256));
+        CUDA_CHECK(cudaFree(d_P));
+        CUDA_CHECK(cudaFree(d_R));
+        CUDA_CHECK(cudaFree(d_found_flag));
+        CUDA_CHECK(cudaFree(d_found_result));
+        CUDA_CHECK(cudaFree(d_hashes_accum));
+        CUDA_CHECK(cudaFree(d_any_left));
+        CUDA_CHECK(cudaFree(d_pre_Gx_local));
+        CUDA_CHECK(cudaFree(d_pre_Gy_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGx_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGy_local));
+        return EXIT_FAILURE;
+    }
+    precompute_table_kernel<<<precompute_blocks, threadsPerBlock>>>(phi_base, d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
