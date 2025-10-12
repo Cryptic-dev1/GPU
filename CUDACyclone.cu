@@ -151,28 +151,14 @@ __global__ void fused_ec_hash(
     unsigned long long my_scalar[4];
     fieldCopy(my_scalar, scalars + idx * 4);
 
-    unsigned long long Rx[4], Ry[4], Rz[4];
-    JacobianPoint R_point;
-    R_point.infinity = true;
-    fieldSetZero(R_point.x); fieldSetZero(R_point.y); fieldSetZero(R_point.z);
+    unsigned long long Rx[4], Ry[4];
+    scalarMulBaseJacobian(my_scalar, Rx, Ry, pre_Gx, pre_Gy, pre_phiGx, pre_phiGy);
 
-    for (int i = 0; i < 256; ++i) {
-        if (!R_point.infinity) {
-            pointDoubleJacobian(&R_point, &R_point);
-        }
-        unsigned long long bit = (scalar[i / 64] >> (i % 64)) & 1ULL;
-        if (bit) {
-            pointAddMixed(&R_point, pre_Gx + (i % PRECOMPUTE_SIZE) * 4, pre_Gy + (i % PRECOMPUTE_SIZE) * 4, &R_point);
-        }
-    }
-
-    fieldCopy(R_point.x, Rx);
-    fieldCopy(R_point.y, Ry);
-    fieldCopy(R_point.z, Rz);
-
+    // Debug output for scalarMulBaseJacobian results
     if (lane == 0 && blockIdx.x == 0) {
-        printf("fused_ec_hash: idx=%d, Rx=%llx:%llx:%llx:%llx, Ry=%llx:%llx:%llx:%llx, Rz=%llx:%llx:%llx:%llx, infinity=%d\n",
-               idx, Rx[0], Rx[1], Rx[2], Rx[3], Ry[0], Ry[1], Ry[2], Ry[3], Rz[0], Rz[1], Rz[2], Rz[3], R_point.infinity);
+        printf("fused_ec_hash: idx=%d, scalar=%llx:%llx:%llx:%llx, Rx=%llx:%llx:%llx:%llx, Ry=%llx:%llx:%llx:%llx\n",
+               idx, my_scalar[0], my_scalar[1], my_scalar[2], my_scalar[3],
+               Rx[0], Rx[1], Rx[2], Rx[3], Ry[0], Ry[1], Ry[2], Ry[3]);
     }
 
     unsigned long long z_values[BATCH_SIZE * 4];
@@ -184,16 +170,20 @@ __global__ void fused_ec_hash(
 
     if (lane < BATCH_SIZE / 2) {
         int local_idx = idx % (BATCH_SIZE / 2);
+        // Compute z-inverse directly to get affine coordinates
+        unsigned long long z_inv[4];
+        fieldInvFermat_device(R + idx * 8 + 4, z_inv); // Use R->z (not implemented directly, using Ry as placeholder)
+        fieldMul_opt_device(Rx, z_inv, x_affine + local_idx * 4);
+        fieldMul_opt_device(Ry, z_inv, y_affine + local_idx * 4);
+        fieldCopy(R + idx * 8 + 4, z_values + local_idx * 4); // Use Ry as z for now
         fieldCopy(Rx, P + idx * 8);
         fieldCopy(Ry, P + idx * 8 + 4);
-        fieldCopy(Rz, z_values + local_idx * 4); // Use Rz instead of Ry
         if (lane == 0) {
-            printf("fused_ec_hash: Block %d, lane %d, writing z_values[%d]=%llx:%llx:%llx:%llx\n",
+            printf("fused_ec_hash: Block %d, lane %d, writing z_values[%d]=%llx:%llx:%llx:%llx, x_affine=%llx:%llx:%llx:%llx, y_affine=%llx:%llx:%llx:%llx\n",
                    blockIdx.x, lane, local_idx,
-                   z_values[local_idx * 4],
-                   z_values[local_idx * 4 + 1],
-                   z_values[local_idx * 4 + 2],
-                   z_values[local_idx * 4 + 3]);
+                   z_values[local_idx * 4], z_values[local_idx * 4 + 1], z_values[local_idx * 4 + 2], z_values[local_idx * 4 + 3],
+                   x_affine[local_idx * 4], x_affine[local_idx * 4 + 1], x_affine[local_idx * 4 + 2], x_affine[local_idx * 4 + 3],
+                   y_affine[local_idx * 4], y_affine[local_idx * 4 + 1], y_affine[local_idx * 4 + 2], y_affine[local_idx * 4 + 3]);
         }
     }
     __syncthreads();
