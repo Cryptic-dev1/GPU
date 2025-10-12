@@ -116,7 +116,7 @@ __device__ void fieldMul_opt_device(const unsigned long long a[4], const unsigne
     for (int i = 0; i < 4; ++i) {
         unsigned long long carry = 0;
         #pragma unroll
-        for (int j = 0; j < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
             __uint128_t prod = (__uint128_t)a[i] * b[j] + temp[i + j] + carry;
             temp[i + j] = (unsigned long long)prod;
             carry = (unsigned long long)(prod >> 64);

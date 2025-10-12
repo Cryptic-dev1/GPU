@@ -79,6 +79,23 @@ __device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found
     return f == FOUND_READY;
 }
 
+// Forward declaration for searchKernel
+__global__ void searchKernel(
+    const unsigned long long* scalars_in,
+    unsigned long long* outX,
+    unsigned long long* outY,
+    int N,
+    unsigned long long* counts,
+    int* found_flag,
+    FoundResult* found_result,
+    unsigned long long* hashes_accum,
+    unsigned int* any_left,
+    const unsigned long long* pre_Gx,
+    const unsigned long long* pre_Gy,
+    const unsigned long long* pre_phiGx,
+    const unsigned long long* pre_phiGy
+);
+
 // Debug kernel to test memory writes
 __global__ void debug_test_write_kernel(unsigned long long* phi_x, unsigned long long* phi_y) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
@@ -89,8 +106,65 @@ __global__ void debug_test_write_kernel(unsigned long long* phi_x, unsigned long
 
 __global__ void compute_phi_base_kernel(unsigned long long* phi_x, unsigned long long* phi_y) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        fieldCopy(Gy_d, phi_y); // Simplified for debugging
+        unsigned long long temp[8];
+        fieldMul_opt_device(Gx_d, c_beta, temp);
+        modred_barrett_opt_device(temp, phi_x);
+        fieldCopy(Gy_d, phi_y);
     }
+}
+
+__global__ void searchKernel(
+    const unsigned long long* scalars_in,
+    unsigned long long* outX,
+    unsigned long long* outY,
+    int N,
+    unsigned long long* counts,
+    int* found_flag,
+    FoundResult* found_result,
+    unsigned long long* hashes_accum,
+    unsigned int* any_left,
+    const unsigned long long* pre_Gx,
+    const unsigned long long* pre_Gy,
+    const unsigned long long* pre_phiGx,
+    const unsigned long long* pre_phiGy
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned lane = threadIdx.x % WARP_SIZE;
+    unsigned full_mask = 0xFFFFFFFF;
+    if (idx >= N || idx >= MAX_BATCH_SIZE) return;
+
+    unsigned long long scalar[4];
+    fieldCopy(scalars_in + idx*4, scalar);
+    unsigned long long Rx[4], Ry[4];
+    uint8_t hash[20];
+
+    for (int iter = 0; iter < 1000; ++iter) {
+        if (warp_found_ready(found_flag, full_mask, lane)) return;
+
+        scalarMulBaseJacobian(scalar, Rx, Ry, pre_Gx, pre_Gy, pre_phiGx, pre_phiGy);
+        getHash160_33_from_limbs((Ry[0] & 1ULL) ? 0x03 : 0x02, Rx, hash);
+
+        if (hash160_matches_prefix_then_full(hash, c_target_hash160, c_target_prefix)) {
+            int old = atomicCAS(found_flag, FOUND_NONE, FOUND_LOCK);
+            if (old == FOUND_NONE) {
+                FoundResult res;
+                res.threadId = idx;
+                res.iter = iter;
+                fieldCopy(scalar, res.scalar_val);
+                fieldCopy(Rx, res.Rx_val);
+                fieldCopy(Ry, res.Ry_val);
+                *found_result = res;
+                *found_flag = FOUND_READY;
+                return;
+            }
+        }
+
+        inc256_device(scalar, 1ULL);
+        atomicAdd(counts, 1ULL);
+    }
+
+    *any_left = 1;
+    __syncthreads();
 }
 
 int main(int argc, char* argv[]) {
@@ -234,6 +308,33 @@ int main(int argc, char* argv[]) {
     compute_phi_base_kernel<<<1, 1>>>(d_phi_x, d_phi_y);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
+
+    // Validate phi(G) computation
+    unsigned long long h_phi_x[4], h_phi_y[4];
+    CUDA_CHECK(cudaMemcpy(h_phi_x, d_phi_x, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_phi_y, d_phi_y, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    if (verbose) {
+        std::cout << "phi_x: " << CryptoUtils::formatHex256(h_phi_x) << "\n";
+        std::cout << "phi_y: " << CryptoUtils::formatHex256(h_phi_y) << "\n";
+    }
+    if (isZero256(h_phi_x) || isZero256(h_phi_y)) {
+        std::cerr << "Error: phi(G) computation failed\n";
+        CUDA_CHECK(cudaFree(d_phi_x));
+        CUDA_CHECK(cudaFree(d_phi_y));
+        CUDA_CHECK(cudaFree(d_start_scalars));
+        CUDA_CHECK(cudaFree(d_counts256));
+        CUDA_CHECK(cudaFree(d_P));
+        CUDA_CHECK(cudaFree(d_R));
+        CUDA_CHECK(cudaFree(d_found_flag));
+        CUDA_CHECK(cudaFree(d_found_result));
+        CUDA_CHECK(cudaFree(d_hashes_accum));
+        CUDA_CHECK(cudaFree(d_any_left));
+        CUDA_CHECK(cudaFree(d_pre_Gx_local));
+        CUDA_CHECK(cudaFree(d_pre_Gy_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGx_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGy_local));
+        return EXIT_FAILURE;
+    }
 
     // Precompute tables
     JacobianPoint base;
