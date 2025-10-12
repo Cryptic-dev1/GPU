@@ -106,7 +106,7 @@ __global__ void searchKernel(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned lane = threadIdx.x % WARP_SIZE;
     unsigned full_mask = 0xFFFFFFFF;
-    if (idx >= N) return;
+    if (idx >= N || idx >= MAX_BATCH_SIZE) return;
 
     unsigned long long scalar[4];
     fieldCopy(scalars_in + idx*4, scalar);
@@ -211,10 +211,10 @@ int main(int argc, char* argv[]) {
     FoundResult *d_found_result;
     unsigned long long *d_hashes_accum;
     unsigned int *d_any_left;
-    CUDA_CHECK(cudaMalloc(&d_start_scalars, blocks * threadsPerBlock * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_start_scalars, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_counts256, sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_P, blocks * threadsPerBlock * 8 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_R, blocks * threadsPerBlock * 8 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_P, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_R, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_found_flag, sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_found_result, sizeof(FoundResult)));
     CUDA_CHECK(cudaMalloc(&d_hashes_accum, sizeof(unsigned long long)));
@@ -268,14 +268,14 @@ int main(int argc, char* argv[]) {
 
     // Initialize scalars
     unsigned long long *h_start_scalars;
-    CUDA_CHECK(cudaMallocHost(&h_start_scalars, blocks * threadsPerBlock * 4 * sizeof(unsigned long long)));
-    for (int i = 0; i < blocks * threadsPerBlock; ++i) {
+    CUDA_CHECK(cudaMallocHost(&h_start_scalars, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
+    for (int i = 0; i < MAX_BATCH_SIZE; ++i) {
         unsigned long long offset[4], remainder;
-        divmod_256_by_u64(start, blocks * threadsPerBlock, offset, remainder);
+        divmod_256_by_u64(start, MAX_BATCH_SIZE, offset, remainder);
         fieldCopy(offset, h_start_scalars + i*4);
         inc256(h_start_scalars + i*4, i + remainder);
     }
-    CUDA_CHECK(cudaMemcpy(d_start_scalars, h_start_scalars, blocks * threadsPerBlock * 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_start_scalars, h_start_scalars, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
 
     // Main search loop
     cudaStream_t streamKernel;
@@ -288,10 +288,11 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, handle_sigint);
     while (!stop_all && !g_sigint) {
         CUDA_CHECK(cudaMemsetAsync(d_any_left, 0, sizeof(unsigned int), streamKernel));
-        searchKernel<<<blocks, threadsPerBlock, 0, streamKernel>>>(d_start_scalars, d_P, d_R, blocks * threadsPerBlock,
+        searchKernel<<<blocks, threadsPerBlock, 0, streamKernel>>>(d_start_scalars, d_P, d_R, MAX_BATCH_SIZE,
                                                                  d_counts256, d_found_flag, d_found_result, d_hashes_accum,
                                                                  d_any_left, d_pre_Gx_local, d_pre_Gy_local, d_pre_phiGx_local, d_pre_phiGy_local);
         CUDA_CHECK(cudaGetLastError());
+        CUDA_CHECK(cudaStreamSynchronize(streamKernel));
 
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration<double>(now - tLast).count() >= 0.5) {
@@ -327,9 +328,9 @@ int main(int argc, char* argv[]) {
                 completed_all = true;
                 break;
             }
-            CUDA_CHECK(cudaMemcpy(d_start_scalars, h_start_scalars, blocks * threadsPerBlock * 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
-            for (int i = 0; i < blocks * threadsPerBlock; ++i) {
-                inc256(h_start_scalars + i*4, blocks * threadsPerBlock);
+            CUDA_CHECK(cudaMemcpy(d_start_scalars, h_start_scalars, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long), cudaMemcpyHostToDevice));
+            for (int i = 0; i < MAX_BATCH_SIZE; ++i) {
+                inc256(h_start_scalars + i*4, MAX_BATCH_SIZE);
             }
             continue;
         }
