@@ -117,13 +117,11 @@ __device__ void fieldMul_opt_device(const unsigned long long a[4], const unsigne
         unsigned long long carry = 0;
         #pragma unroll
         for (int j = 0; j < 4; ++j) {
-            unsigned long long lo, hi;
-            UMULLO(lo, a[i], b[j]);
-            UMULHI(hi, a[i], b[j]);
-            UADDO(temp[i+j], temp[i+j], lo);
-            UADDC(temp[i+j+1], temp[i+j+1], hi);
-            UADD(carry, carry, 0);
+            __uint128_t prod = (__uint128_t)a[i] * b[j] + temp[i + j] + carry;
+            temp[i + j] = (unsigned long long)prod;
+            carry = (unsigned long long)(prod >> 64);
         }
+        temp[i + 4] += carry;
     }
     #pragma unroll
     for (int i = 0; i < 8; ++i) c[i] = temp[i];
