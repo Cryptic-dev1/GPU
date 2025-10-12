@@ -238,7 +238,7 @@ __device__ void pointAddJacobian(const JacobianPoint &P, const JacobianPoint &Q,
     fieldMul_opt_device(Q.y, t3, t1);
     modred_barrett_opt_device(t1, t3); // t3 = Q.y*(P.x*Q.z^2 - Q.x*P.z^2)^2
     fieldSub_opt_device(t5, t3, R.y); // R.y = P.y*P.z*(P.x*Q.z^2 - Q.x*P.z^2) - Q.y*(P.x*Q.z^2 - Q.x*P.z^2)^2
-    fieldMul_opt_device(R.x, t4, t1);
+    fieldMul_opt_device(R.x, t4, t1);
     modred_barrett_opt_device(t1, t3); // t3 = (P.x*Q.z^2 - Q.x*P.z^2)^3
     fieldSub_opt_device(R.x, t3, R.x); // R.x = Q.x*(P.x*Q.z^2 - Q.x*P.z^2)^2 - (P.x*Q.z^2 - Q.x*P.z^2)^3
     R.infinity = false;

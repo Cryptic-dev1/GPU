@@ -241,18 +241,35 @@ int main(int argc, char* argv[]) {
     }
 
     // Validate constants
-    unsigned long long h_Gx_d[4], h_Gy_d[4], h_c_beta[4];
+    unsigned long long h_Gx_d[4], h_Gy_d[4], h_c_beta[4], h_c_mu[5];
     CUDA_CHECK(cudaMemcpyFromSymbol(h_Gx_d, Gx_d, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemcpyFromSymbol(h_Gy_d, Gy_d, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemcpyFromSymbol(h_c_beta, c_beta, 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemcpyFromSymbol(h_c_mu, c_mu, 5 * sizeof(unsigned long long)));
     if (verbose) {
         std::cout << "Gx_d: " << CryptoUtils::formatHex256(h_Gx_d) << "\n";
         std::cout << "Gy_d: " << CryptoUtils::formatHex256(h_Gy_d) << "\n";
         std::cout << "c_beta: " << CryptoUtils::formatHex256(h_c_beta) << "\n";
+        std::cout << "c_mu: " << std::hex << std::uppercase << std::setfill('0')
+                  << std::setw(16) << h_c_mu[4] << std::setw(16) << h_c_mu[3]
+                  << std::setw(16) << h_c_mu[2] << std::setw(16) << h_c_mu[1]
+                  << std::setw(16) << h_c_mu[0] << "\n";
     }
     if (isZero256(h_Gx_d) || isZero256(h_Gy_d) || isZero256(h_c_beta)) {
         std::cerr << "Error: Gx_d, Gy_d, or c_beta is zero\n";
         return EXIT_FAILURE;
+    }
+    // Validate c_mu
+    unsigned long long expected_c_mu[5] = {0x1000003d1ULL, 0ULL, 0ULL, 0ULL, 1ULL};
+    bool c_mu_valid = true;
+    for (int i = 0; i < 5; ++i) {
+        if (h_c_mu[i] != expected_c_mu[i]) {
+            c_mu_valid = false;
+            break;
+        }
+    }
+    if (!c_mu_valid) {
+        std::cerr << "Warning: c_mu in CUDAStructures.h is incorrect\n";
     }
     // Warn about incorrect c_beta
     unsigned long long expected_c_beta[4] = {0x719501eeULL, 0xc1396c28ULL, 0x12f58995ULL, 0x9cf04975ULL};
@@ -347,9 +364,6 @@ int main(int argc, char* argv[]) {
 
     // Precompute tables
     JacobianPoint base;
-    unsigned long long h_Gx_d[4], h_Gy_d[4];
-    CUDA_CHECK(cudaMemcpyFromSymbol(h_Gx_d, Gx_d, 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemcpyFromSymbol(h_Gy_d, Gy_d, 4 * sizeof(unsigned long long)));
     fieldCopy(h_Gx_d, base.x);
     fieldCopy(h_Gy_d, base.y);
     fieldSetZero(base.z);
