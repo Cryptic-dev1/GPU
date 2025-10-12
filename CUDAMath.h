@@ -42,9 +42,6 @@ __device__ __constant__ unsigned long long c_beta_fallback[4] = {
 __device__ __constant__ unsigned long long Gy_d_fallback[4] = {
     0xfb10d4b8ULL, 0x9c47d08fULL, 0xa6855419ULL, 0x483ada77ULL
 };
-__device__ __constant__ unsigned long long lambda[4] = {
-    0x2c558d3aULL, 0xdf74767cULL, 0x20816678ULL, 0x5363ad4cULL
-};
 
 // Host-side copy of c_p
 static const unsigned long long host_c_p[4] = {0xfffffc2fULL, 0xffffffffULL, 0xffffffffULL, 0xffffffffULL};
@@ -390,7 +387,7 @@ __host__ bool isPointOnCurve(const unsigned long long x[4], const unsigned long 
     return _IsEqual(result, x3_plus_7);
 }
 
-// Device curve validation kernel
+// Device curve validation function
 __device__ bool isPointOnCurve_device(const unsigned long long x[4], const unsigned long long y[4]) {
     unsigned long long y2[8], x3[8], seven[4] = {7ULL, 0ULL, 0ULL, 0ULL}, temp[8], result[4], x3_plus_7[4];
     fieldSqr_opt_device(y, y2);
@@ -405,6 +402,15 @@ __device__ bool isPointOnCurve_device(const unsigned long long x[4], const unsig
 __global__ void validate_point_kernel(const unsigned long long* x, const unsigned long long* y, int* valid) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         *valid = isPointOnCurve_device(x, y);
+    }
+}
+
+__global__ void validate_precompute_kernel(const unsigned long long* pre_x, const unsigned long long* pre_y, unsigned long long size, int* valid) {
+    unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    bool is_valid = isPointOnCurve_device(pre_x + idx * 4, pre_y + idx * 4);
+    if (!is_valid) {
+        atomicAnd(valid, 0);
     }
 }
 
@@ -428,9 +434,12 @@ __global__ void debug_precompute_verify_kernel(unsigned long long* pre_x, unsign
     fieldCopy(pre_y + idx * 4, debug_out + idx * 8 + 4);
 }
 
-__global__ void compute_phi_base_kernel(unsigned long long* phi_x, unsigned long long* phi_y, const unsigned long long* pre_Gx, const unsigned long long* pre_Gy) {
+__global__ void compute_phi_base_kernel(unsigned long long* phi_x, unsigned long long* phi_y) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        scalarMulBaseJacobian(lambda, phi_x, phi_y, pre_Gx, pre_Gy, pre_Gx, pre_Gy);
+        unsigned long long temp[8];
+        fieldMul_opt_device(Gx_d, c_beta_fallback, temp);
+        modred_barrett_opt_device(temp, phi_x);
+        fieldCopy(Gy_d_fallback, phi_y);
     }
 }
 

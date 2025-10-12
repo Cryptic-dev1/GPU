@@ -97,11 +97,11 @@ __global__ void searchKernel(
 );
 
 // Debug kernel to test memory writes
-__global__ void debug_test_write_kernel(unsigned long long* phi_x, unsigned long long* phi_y) {
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        phi_x[0] = 0ULL;
-        phi_y[0] = 0ULL;
-    }
+__global__ void debug_test_write_kernel(unsigned long long* pre_x, unsigned long long* pre_y, unsigned long long size) {
+    unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    pre_x[idx * 4] = 0ULL;
+    pre_y[idx * 4] = 0ULL;
 }
 
 __global__ void searchKernel(
@@ -269,7 +269,7 @@ int main(int argc, char* argv[]) {
 
     // Allocate memory
     unsigned long long *d_start_scalars, *d_counts256, *d_P, *d_R, *d_pre_Gx_local, *d_pre_Gy_local, *d_pre_phiGx_local, *d_pre_phiGy_local;
-    int *d_found_flag, *d_phi_valid;
+    int *d_found_flag, *d_valid;
     FoundResult *d_found_result;
     unsigned long long *d_hashes_accum;
     unsigned int *d_any_left;
@@ -287,7 +287,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMalloc(&d_pre_phiGx_local, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_pre_phiGy_local, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_debug_precompute, PRECOMPUTE_SIZE_LOCAL * 8 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_phi_valid, sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_valid, sizeof(int)));
 
     // Initialize memory
     CUDA_CHECK(cudaMemset(d_counts256, 0, sizeof(unsigned long long)));
@@ -301,7 +301,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemset(d_pre_phiGx_local, 0, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemset(d_pre_phiGy_local, 0, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemset(d_debug_precompute, 0, PRECOMPUTE_SIZE_LOCAL * 8 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_phi_valid, 0, sizeof(int)));
+    CUDA_CHECK(cudaMemset(d_valid, 1, sizeof(int)));
 
     // Set constants
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_hash160, target_hash160, 20 * sizeof(uint8_t)));
@@ -335,13 +335,42 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_pre_phiGx_local));
         CUDA_CHECK(cudaFree(d_pre_phiGy_local));
         CUDA_CHECK(cudaFree(d_debug_precompute));
-        CUDA_CHECK(cudaFree(d_phi_valid));
+        CUDA_CHECK(cudaFree(d_valid));
         return EXIT_FAILURE;
     }
     int precompute_blocks = (PRECOMPUTE_SIZE_LOCAL + threadsPerBlock - 1) / threadsPerBlock;
     precompute_table_kernel<<<precompute_blocks, threadsPerBlock>>>(base, d_pre_Gx_local, d_pre_Gy_local, PRECOMPUTE_SIZE_LOCAL);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
+
+    // Validate precomputed G tables
+    if (verbose) {
+        std::cout << "Validating precomputed G tables...\n";
+    }
+    CUDA_CHECK(cudaMemset(d_valid, 1, sizeof(int)));
+    validate_precompute_kernel<<<precompute_blocks, threadsPerBlock>>>(d_pre_Gx_local, d_pre_Gy_local, PRECOMPUTE_SIZE_LOCAL, d_valid);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    int h_valid;
+    CUDA_CHECK(cudaMemcpy(&h_valid, d_valid, sizeof(int), cudaMemcpyDeviceToHost));
+    if (!h_valid) {
+        std::cerr << "Error: precomputed G tables contain invalid points\n";
+        CUDA_CHECK(cudaFree(d_start_scalars));
+        CUDA_CHECK(cudaFree(d_counts256));
+        CUDA_CHECK(cudaFree(d_P));
+        CUDA_CHECK(cudaFree(d_R));
+        CUDA_CHECK(cudaFree(d_found_flag));
+        CUDA_CHECK(cudaFree(d_found_result));
+        CUDA_CHECK(cudaFree(d_hashes_accum));
+        CUDA_CHECK(cudaFree(d_any_left));
+        CUDA_CHECK(cudaFree(d_pre_Gx_local));
+        CUDA_CHECK(cudaFree(d_pre_Gy_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGx_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGy_local));
+        CUDA_CHECK(cudaFree(d_debug_precompute));
+        CUDA_CHECK(cudaFree(d_valid));
+        return EXIT_FAILURE;
+    }
 
     // Debug: Check first few precomputed points
     unsigned long long h_pre_Gx[4], h_pre_Gy[4];
@@ -367,7 +396,7 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_pre_phiGx_local));
         CUDA_CHECK(cudaFree(d_pre_phiGy_local));
         CUDA_CHECK(cudaFree(d_debug_precompute));
-        CUDA_CHECK(cudaFree(d_phi_valid));
+        CUDA_CHECK(cudaFree(d_valid));
         return EXIT_FAILURE;
     }
 
@@ -382,7 +411,7 @@ int main(int argc, char* argv[]) {
     if (verbose) {
         std::cout << "Testing memory write to d_phi_x and d_phi_y...\n";
     }
-    debug_test_write_kernel<<<1, 1>>>(d_phi_x, d_phi_y);
+    debug_test_write_kernel<<<precompute_blocks, threadsPerBlock>>>(d_phi_x, d_phi_y, 1);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
     if (verbose) {
@@ -391,9 +420,9 @@ int main(int argc, char* argv[]) {
 
     // Run phi base computation
     if (verbose) {
-        std::cout << "Computing phi(G) using scalar multiplication...\n";
+        std::cout << "Computing phi(G)...\n";
     }
-    compute_phi_base_kernel<<<1, 1>>>(d_phi_x, d_phi_y, d_pre_Gx_local, d_pre_Gy_local);
+    compute_phi_base_kernel<<<1, 1>>>(d_phi_x, d_phi_y);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -410,12 +439,12 @@ int main(int argc, char* argv[]) {
     if (verbose) {
         std::cout << "Validating phi(G) on device...\n";
     }
-    validate_point_kernel<<<1, 1>>>(d_phi_x, d_phi_y, d_phi_valid);
+    CUDA_CHECK(cudaMemset(d_valid, 1, sizeof(int)));
+    validate_point_kernel<<<1, 1>>>(d_phi_x, d_phi_y, d_valid);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
-    int h_phi_valid;
-    CUDA_CHECK(cudaMemcpy(&h_phi_valid, d_phi_valid, sizeof(int), cudaMemcpyDeviceToHost));
-    if (!h_phi_valid) {
+    CUDA_CHECK(cudaMemcpy(&h_valid, d_valid, sizeof(int), cudaMemcpyDeviceToHost));
+    if (!h_valid) {
         std::cerr << "Error: phi(G) point is not on the secp256k1 curve (device validation)\n";
         CUDA_CHECK(cudaFree(d_phi_x));
         CUDA_CHECK(cudaFree(d_phi_y));
@@ -432,7 +461,7 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_pre_phiGx_local));
         CUDA_CHECK(cudaFree(d_pre_phiGy_local));
         CUDA_CHECK(cudaFree(d_debug_precompute));
-        CUDA_CHECK(cudaFree(d_phi_valid));
+        CUDA_CHECK(cudaFree(d_valid));
         return EXIT_FAILURE;
     }
 
@@ -457,7 +486,7 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_pre_phiGx_local));
         CUDA_CHECK(cudaFree(d_pre_phiGy_local));
         CUDA_CHECK(cudaFree(d_debug_precompute));
-        CUDA_CHECK(cudaFree(d_phi_valid));
+        CUDA_CHECK(cudaFree(d_valid));
         return EXIT_FAILURE;
     }
 
@@ -491,14 +520,14 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_pre_phiGx_local));
         CUDA_CHECK(cudaFree(d_pre_phiGy_local));
         CUDA_CHECK(cudaFree(d_debug_precompute));
-        CUDA_CHECK(cudaFree(d_phi_valid));
+        CUDA_CHECK(cudaFree(d_valid));
         return EXIT_FAILURE;
     }
     // Debug: Test write to d_pre_phiGx_local and d_pre_phiGy_local
     if (verbose) {
         std::cout << "Testing memory write to d_pre_phiGx_local and d_pre_phiGy_local...\n";
     }
-    debug_precompute_write_kernel<<<precompute_blocks, threadsPerBlock>>>(d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE_LOCAL);
+    debug_test_write_kernel<<<precompute_blocks, threadsPerBlock>>>(d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE_LOCAL);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
     if (verbose) {
@@ -507,6 +536,36 @@ int main(int argc, char* argv[]) {
     precompute_table_kernel<<<precompute_blocks, threadsPerBlock>>>(phi_base, d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE_LOCAL);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
+
+    // Validate precomputed phi(G) tables
+    if (verbose) {
+        std::cout << "Validating precomputed phi(G) tables...\n";
+    }
+    CUDA_CHECK(cudaMemset(d_valid, 1, sizeof(int)));
+    validate_precompute_kernel<<<precompute_blocks, threadsPerBlock>>>(d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE_LOCAL, d_valid);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaMemcpy(&h_valid, d_valid, sizeof(int), cudaMemcpyDeviceToHost));
+    if (!h_valid) {
+        std::cerr << "Error: precomputed phi(G) tables contain invalid points\n";
+        CUDA_CHECK(cudaFree(d_phi_x));
+        CUDA_CHECK(cudaFree(d_phi_y));
+        CUDA_CHECK(cudaFree(d_start_scalars));
+        CUDA_CHECK(cudaFree(d_counts256));
+        CUDA_CHECK(cudaFree(d_P));
+        CUDA_CHECK(cudaFree(d_R));
+        CUDA_CHECK(cudaFree(d_found_flag));
+        CUDA_CHECK(cudaFree(d_found_result));
+        CUDA_CHECK(cudaFree(d_hashes_accum));
+        CUDA_CHECK(cudaFree(d_any_left));
+        CUDA_CHECK(cudaFree(d_pre_Gx_local));
+        CUDA_CHECK(cudaFree(d_pre_Gy_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGx_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGy_local));
+        CUDA_CHECK(cudaFree(d_debug_precompute));
+        CUDA_CHECK(cudaFree(d_valid));
+        return EXIT_FAILURE;
+    }
 
     // Debug: Verify precomputed phi tables
     if (verbose) {
@@ -539,14 +598,14 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_pre_phiGx_local));
         CUDA_CHECK(cudaFree(d_pre_phiGy_local));
         CUDA_CHECK(cudaFree(d_debug_precompute));
-        CUDA_CHECK(cudaFree(d_phi_valid));
+        CUDA_CHECK(cudaFree(d_valid));
         return EXIT_FAILURE;
     }
 
     CUDA_CHECK(cudaFree(d_phi_x));
     CUDA_CHECK(cudaFree(d_phi_y));
     CUDA_CHECK(cudaFree(d_debug_precompute));
-    CUDA_CHECK(cudaFree(d_phi_valid));
+    CUDA_CHECK(cudaFree(d_valid));
 
     // Initialize scalars
     unsigned long long *h_start_scalars;
