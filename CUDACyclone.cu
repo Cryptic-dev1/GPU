@@ -121,6 +121,57 @@ __global__ void test_precomputed_tables(unsigned long long* d_pre_Gx, unsigned l
     }
 }
 
+// Modified scalarMulKernelBase for debugging
+__global__ void scalarMulKernelBase(
+    const unsigned long long* __restrict__ scalars,
+    unsigned long long* __restrict__ outX,
+    unsigned long long* __restrict__ outY,
+    unsigned long long threadsTotal,
+    const unsigned long long* __restrict__ d_pre_Gx,
+    const unsigned long long* __restrict__ d_pre_Gy,
+    const unsigned long long* __restrict__ d_pre_phiGx,
+    const unsigned long long* __restrict__ d_pre_phiGy
+) {
+    unsigned long long gid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid >= threadsTotal) return;
+
+    unsigned long long k1[4], k2[4], scalar[4];
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) {
+        scalar[i] = scalars[gid * 4 + i];
+    }
+    split_glv(scalar, k1, k2);
+
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("scalarMulKernelBase: gid=%llu, scalar=%llx:%llx:%llx:%llx, k1=%llx:%llx:%llx:%llx, k2=%llx:%llx:%llx:%llx\n",
+               gid, scalar[0], scalar[1], scalar[2], scalar[3],
+               k1[0], k1[1], k1[2], k1[3], k2[0], k2[1], k2[2], k2[3]);
+    }
+
+    JacobianPoint R;
+    if (k1[3] == 0 && k1[2] == 0 && k1[1] == 0 && k1[0] <= 0xFFFFFFFF) {
+        pointSetG(R);
+        for (uint64_t i = 0; i < k1[0]; ++i) {
+            pointDoubleJacobian(R, R);
+            if (threadIdx.x == 0 && blockIdx.x == 0 && i % 10 == 0) {
+                printf("scalarMulKernelBase: doubling %llu, R.x=%llx:%llx:%llx:%llx, R.z=%llx:%llx:%llx:%llx, R.infinity=%d\n",
+                       i, R.x[0], R.x[1], R.x[2], R.x[3], R.z[0], R.z[1], R.z[2], R.z[3], R.infinity);
+            }
+        }
+        pointToAffine(R, outX + gid * 4, outY + gid * 4);
+    } else {
+        // Existing code for precomputed table path (not shown for brevity)
+        pointSetInfinity(R);
+        pointToAffine(R, outX + gid * 4, outY + gid * 4);
+    }
+
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("scalarMulKernelBase: gid=%llu, outX=%llx:%llx:%llx:%llx, outY=%llx:%llx:%llx:%llx\n",
+               gid, outX[gid*4], outX[gid*4+1], outX[gid*4+2], outX[gid*4+3],
+               outY[gid*4], outY[gid*4+1], outY[gid*4+2], outY[gid*4+3]);
+    }
+}
+
 __launch_bounds__(256, 2)
 __global__ void fused_ec_hash(
     JacobianPoint* __restrict__ P,
@@ -217,8 +268,8 @@ __global__ void fused_ec_hash(
         __syncthreads(); // Ensure all point additions are complete
 
         // Batch inversion
-        bool skip_inversion = P_local.infinity;
-        int any_non_infinity = __syncthreads_count(!P_local.infinity);
+        bool skip_inversion = P_local.infinity || isZero256(P_local.z);
+        int any_non_infinity = __syncthreads_count(!skip_inversion);
         if (lane < B && !skip_inversion) {
             fieldCopy(P_local.z, z_values + lane * 4);
             if (lane == 0 && blockIdx.x == 0) {
@@ -394,7 +445,8 @@ int main(int argc, char* argv[]) {
     // Argument parsing
     unsigned long long range_start[4] = {0}, range_end[4] = {0}, range_len[4];
     uint8_t target_hash160[20] = {0};
-    int blocks = 64, threadsPerBlock = 128, batch_size = 8;
+    int blocks = 64, threadsPerBlock = 32; // Default to match --grid 64,32
+    int batch_size = 8;
     uint32_t max_batches_per_launch = 64;
     std::string range_str, address_str, grid_str;
     bool verbose = false;
