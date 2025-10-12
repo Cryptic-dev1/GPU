@@ -97,12 +97,27 @@ __global__ void test_constant_memory(unsigned long long* out, int batch_size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= batch_size / 2) return;
     for (int i = 0; i < 4; ++i) {
-        out[idx * 8 + i] = c_Gx[idx * 4 + i]; // Modified to store both x and y
+        out[idx * 8 + i] = c_Gx[idx * 4 + i];
         out[idx * 8 + i + 4] = c_Gy[idx * 4 + i];
     }
     if (idx == 0 && threadIdx.x == 0 && blockIdx.x == 0) {
         printf("test_constant_memory: c_Gx[0]=%llx:%llx:%llx:%llx, c_Gy[0]=%llx:%llx:%llx:%llx\n",
                c_Gx[0], c_Gx[1], c_Gx[2], c_Gx[3], c_Gy[0], c_Gy[1], c_Gy[2], c_Gy[3]);
+    }
+}
+
+// Test kernel to verify precomputed tables
+__global__ void test_precomputed_tables(unsigned long long* d_pre_Gx, unsigned long long* d_pre_Gy, unsigned long long* out, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    for (int i = 0; i < 4; ++i) {
+        out[idx * 8 + i] = d_pre_Gx[idx * 4 + i];
+        out[idx * 8 + i + 4] = d_pre_Gy[idx * 4 + i];
+    }
+    if (idx <= 1 && threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("test_precomputed_tables: idx=%d, pre_x=%llx:%llx:%llx:%llx, pre_y=%llx:%llx:%llx:%llx\n",
+               idx, out[idx*8], out[idx*8+1], out[idx*8+2], out[idx*8+3],
+               out[idx*8+4], out[idx*8+5], out[idx*8+6], out[idx*8+7]);
     }
 }
 
@@ -141,6 +156,12 @@ __global__ void fused_ec_hash(
     #define MAYBE_WARP_FLUSH() do { if ((local_hashes & (FLUSH_THRESHOLD - 1u)) == 0u) WARP_FLUSH_HASHES(); } while (0)
 
     JacobianPoint P_local = P[gid];
+    if (lane == 0 && blockIdx.x == 0) {
+        printf("fused_ec_hash: gid=%llu, P_local.x=%llx:%llx:%llx:%llx, P_local.y=%llx:%llx:%llx:%llx, P_local.z=%llx:%llx:%llx:%llx, P_local.infinity=%d\n",
+               gid, P_local.x[0], P_local.x[1], P_local.x[2], P_local.x[3],
+               P_local.y[0], P_local.y[1], P_local.y[2], P_local.y[3],
+               P_local.z[0], P_local.z[1], P_local.z[2], P_local.z[3], P_local.infinity);
+    }
     unsigned long long S[4], rem[4];
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
@@ -188,9 +209,12 @@ __global__ void fused_ec_hash(
             }
             pointAddMixed(P_local, Q.x, Q.y, Q.infinity, P_local);
             if (lane == 0 && blockIdx.x == 0) {
-                printf("Block %d, after pointAddMixed, P_local.infinity=%d, z[0]=%llx\n", blockIdx.x, P_local.infinity, P_local.z[0]);
+                printf("fused_ec_hash: Block %d, after pointAddMixed, P_local.x=%llx:%llx:%llx:%llx, P_local.z=%llx:%llx:%llx:%llx, P_local.infinity=%d\n",
+                       blockIdx.x, P_local.x[0], P_local.x[1], P_local.x[2], P_local.x[3],
+                       P_local.z[0], P_local.z[1], P_local.z[2], P_local.z[3], P_local.infinity);
             }
         }
+        __syncthreads(); // Ensure all point additions are complete
 
         // Batch inversion
         bool skip_inversion = P_local.infinity;
@@ -198,16 +222,20 @@ __global__ void fused_ec_hash(
         if (lane < B && !skip_inversion) {
             fieldCopy(P_local.z, z_values + lane * 4);
             if (lane == 0 && blockIdx.x == 0) {
-                printf("Block %d, lane %d, writing z_values[0]=%llx:%llx:%llx:%llx\n",
+                printf("fused_ec_hash: Block %d, lane %d, writing z_values[0]=%llx:%llx:%llx:%llx\n",
                        blockIdx.x, lane, z_values[0], z_values[1], z_values[2], z_values[3]);
             }
         } else if (lane < B) {
             fieldSetZero(z_values + lane * 4);
+            if (lane == 0 && blockIdx.x == 0) {
+                printf("fused_ec_hash: Block %d, lane %d, setting z_values[0]=0:0:0:0 (skip_inversion=%d)\n",
+                       blockIdx.x, lane, skip_inversion);
+            }
         }
         __syncthreads();
         if (lane == 0 && any_non_infinity) {
             batch_modinv_fermat(z_values, z_values, B);
-            printf("Block %d, lane 0, after batch_modinv_fermat, z_values[0]=%llx:%llx:%llx:%llx\n",
+            printf("fused_ec_hash: Block %d, lane 0, after batch_modinv_fermat, z_values[0]=%llx:%llx:%llx:%llx\n",
                    blockIdx.x, z_values[0], z_values[1], z_values[2], z_values[3]);
         }
         __syncthreads();
@@ -221,6 +249,11 @@ __global__ void fused_ec_hash(
             fieldMul_opt_device(P_local.x, zinv2, x_affine);
             fieldMul_opt_device(zinv, zinv2, zinv2);
             fieldMul_opt_device(P_local.y, zinv2, y_affine);
+            if (lane == 0 && blockIdx.x == 0) {
+                printf("fused_ec_hash: Block %d, lane %d, x_affine=%llx:%llx:%llx:%llx, y_affine=%llx:%llx:%llx:%llx\n",
+                       blockIdx.x, lane, x_affine[0], x_affine[1], x_affine[2], x_affine[3],
+                       y_affine[0], y_affine[1], y_affine[2], y_affine[3]);
+            }
         } else {
             fieldSetZero(x_affine);
             fieldSetZero(y_affine);
@@ -324,7 +357,6 @@ void precompute_g_table_gpu(JacobianPoint base, JacobianPoint phi_base, unsigned
 
     int threads = 256;
     int blocks = (PRECOMPUTE_SIZE + threads - 1) / threads;
-    // Debug base point before kernel launch
     printf("precompute_g_table_gpu: base.x=%llx:%llx:%llx:%llx, base.y=%llx:%llx:%llx:%llx, base.infinity=%d\n",
            base.x[0], base.x[1], base.x[2], base.x[3], base.y[0], base.y[1], base.y[2], base.y[3], base.infinity);
     printf("precompute_g_table_gpu: phi_base.x=%llx:%llx:%llx:%llx, phi_base.y=%llx:%llx:%llx:%llx, phi_base.infinity=%d\n",
@@ -347,7 +379,7 @@ void print_gpu_info(const cudaDeviceProp& prop, int blocks, int threadsPerBlock,
     std::cout << "ThreadsPerBlock      : " << threadsPerBlock << "\n";
     std::cout << "Blocks               : " << blocks << "\n";
     std::cout << "Points batch size    : " << batch_size << "\n";
-    std::cout << "Batches/SM           : " << batch_size / prop.multiProcessorCount << "\n";
+    std::cout << "Batches/SM           : " << (batch_size / prop.multiProcessorCount) << "\n";
     std::cout << "Precomputed tables    : 2^" << PRECOMPUTE_WINDOW << " points (~" << human_bytes(table_size) << ")\n";
     std::cout << "Memory utilization   : " << std::fixed << std::setprecision(1)
               << (mem_used / (double)prop.totalGlobalMem) * 100.0 << "% ("
@@ -472,7 +504,7 @@ int main(int argc, char* argv[]) {
 
     // Precompute tables
     JacobianPoint h_base, h_phi_base;
-    fieldCopy(h_Gx_d, h_base.x); // Use host values directly
+    fieldCopy(h_Gx_d, h_base.x);
     fieldCopy(h_Gy_d, h_base.y);
     fieldSetOne(h_base.z);
     h_base.infinity = false;
@@ -494,13 +526,31 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(d_beta));
     CUDA_CHECK(cudaFree(d_Gx_d));
     CUDA_CHECK(cudaFree(d_phi_base_x));
-    fieldCopy(h_Gy_d, h_phi_base.y); // Use host Gy_d
+    fieldCopy(h_Gy_d, h_phi_base.y);
     fieldSetOne(h_phi_base.z);
     h_phi_base.infinity = false;
 
     // Precompute tables
     unsigned long long *d_pre_Gx_local, *d_pre_Gy_local, *d_pre_phiGx_local, *d_pre_phiGy_local;
     precompute_g_table_gpu(h_base, h_phi_base, &d_pre_Gx_local, &d_pre_Gy_local, &d_pre_phiGx_local, &d_pre_phiGy_local);
+
+    // Test precomputed tables
+    unsigned long long *d_test_table_out;
+    CUDA_CHECK(cudaMalloc(&d_test_table_out, PRECOMPUTE_SIZE * 8 * sizeof(unsigned long long)));
+    test_precomputed_tables<<<(PRECOMPUTE_SIZE + 255) / 256, 256>>>(d_pre_Gx_local, d_pre_Gy_local, d_test_table_out, PRECOMPUTE_SIZE);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    std::cout << "test_precomputed_tables completed" << std::endl;
+    unsigned long long h_test_table_out[PRECOMPUTE_SIZE * 8];
+    CUDA_CHECK(cudaMemcpy(h_test_table_out, d_test_table_out, PRECOMPUTE_SIZE * 8 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_test_table_out));
+    if (verbose) {
+        for (int i = 0; i < 2 && i < PRECOMPUTE_SIZE; ++i) {
+            std::cout << "d_pre_Gx[" << i << "]: " << std::hex << h_test_table_out[i*8] << ":" << h_test_table_out[i*8+1] << ":"
+                      << h_test_table_out[i*8+2] << ":" << h_test_table_out[i*8+3] << std::endl;
+            std::cout << "d_pre_Gy[" << i << "]: " << std::hex << h_test_table_out[i*8+4] << ":" << h_test_table_out[i*8+5] << ":"
+                      << h_test_table_out[i*8+6] << ":" << h_test_table_out[i*8+7] << std::endl;
+        }
+    }
 
     // Precompute batch points on GPU
     unsigned long long *d_Gx, *d_Gy;
@@ -516,7 +566,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpyToSymbol(c_Gx, d_Gx, batch_size * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemcpyToSymbol(c_Gy, d_Gy, batch_size * 4 * sizeof(unsigned long long)));
     unsigned long long *d_test_out;
-    CUDA_CHECK(cudaMalloc(&d_test_out, (batch_size / 2) * 8 * sizeof(unsigned long long))); // Modified for x and y
+    CUDA_CHECK(cudaMalloc(&d_test_out, (batch_size / 2) * 8 * sizeof(unsigned long long)));
     test_constant_memory<<<1, threads>>>(d_test_out, batch_size);
     CUDA_CHECK(cudaDeviceSynchronize());
     std::cout << "test_constant_memory completed" << std::endl;
@@ -602,7 +652,7 @@ int main(int argc, char* argv[]) {
                   << h_P[0].x[2] << ":" << h_P[0].x[3] << std::endl;
         std::cout << "d_P[0].y: " << std::hex << h_P[0].y[0] << ":" << h_P[0].y[1] << ":"
                   << h_P[0].y[2] << ":" << h_P[0].y[3] << std::endl;
-        std::cout << "d_P[0].infinity: " << h_P[0].infinity << std::endl; // Added debugging
+        std::cout << "d_P[0].infinity: " << h_P[0].infinity << std::endl;
     }
     CUDA_CHECK(cudaMemcpy(d_P, h_P, threadsTotal * sizeof(JacobianPoint), cudaMemcpyHostToDevice));
     delete[] h_P; delete[] h_outX; delete[] h_outY;
@@ -627,7 +677,7 @@ int main(int argc, char* argv[]) {
     while (!stop_all) {
         dim3 gridDim(blocks, 1, 1);
         dim3 blockDim(threadsPerBlock, 1, 1);
-        size_t sharedMem = batch_size * 4 * sizeof(unsigned long long) * 2; // Increased shared memory
+        size_t sharedMem = (batch_size + 1) * 4 * sizeof(unsigned long long); // Adjusted for n+1 elements
         fused_ec_hash<<<gridDim, blockDim, sharedMem, streamKernel>>>(
             d_P, d_R, d_start_scalars, d_counts256, threadsTotal, batch_size,
             max_batches_per_launch, d_found_flag, d_found_result, d_hashes_accum, d_any_left
