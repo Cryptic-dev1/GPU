@@ -33,6 +33,7 @@ static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bi
 #define MADD(r, a, b, c) asm volatile ("madc.hi.u64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c))
 #define MADDS(r, a, b, c) asm volatile ("madc.hi.s64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c))
 
+// Constants
 __device__ __constant__ unsigned long long MM64 = 0xD838091DD2253531ULL;
 __device__ __constant__ unsigned long long MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 
@@ -156,7 +157,7 @@ __device__ void sub512(const unsigned long long a[8], const unsigned long long b
     }
 }
 
-// Host versions of field operations
+// Host Field Operations
 __host__ void fieldAdd_opt_host(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
     unsigned long long carry = 0, temp;
     #pragma unroll
@@ -293,7 +294,7 @@ __host__ void fieldInvFermat_host(const unsigned long long a[4], unsigned long l
     fieldCopy(t, inv);
 }
 
-// Device versions of field operations
+// Device Field Operations
 __device__ void fieldAdd_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
     unsigned long long carry = 0, temp;
     #pragma unroll
@@ -465,22 +466,6 @@ __device__ void fieldInvFermat_device(const unsigned long long a[4], unsigned lo
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         printf("fieldInvFermat_device: output inv=%llx:%llx:%llx:%llx\n", inv[0], inv[1], inv[2], inv[3]);
     }
-}
-
-__host__ __device__ void fieldNeg(const unsigned long long a[4], unsigned long long out[4]) {
-    if (isZero256(a)) {
-        fieldSetZero(out);
-        return;
-    }
-#ifdef __CUDA_ARCH__
-    fieldSub_opt_device(c_p, a, out);
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("fieldNeg: a=%llx:%llx:%llx:%llx, out=%llx:%llx:%llx:%llx\n",
-               a[0], a[1], a[2], a[3], out[0], out[1], out[2], out[3]);
-    }
-#else
-    fieldSub_opt_host(host_c_p, a, out);
-#endif
 }
 
 __device__ void batch_modinv_fermat(const unsigned long long* a, unsigned long long* inv, int n) {
@@ -684,6 +669,23 @@ __device__ void split_glv(const unsigned long long scalar[4], unsigned long long
         printf("split_glv: final k1=%llx:%llx:%llx:%llx, k2=%llx:%llx:%llx:%llx\n",
                k1[0], k1[1], k1[2], k1[3], k2[0], k2[1], k2[2], k2[3]);
     }
+}
+
+// Jacobian Point Operations
+__host__ __device__ void fieldNeg(const unsigned long long a[4], unsigned long long out[4]) {
+    if (isZero256(a)) {
+        fieldSetZero(out);
+        return;
+    }
+#ifdef __CUDA_ARCH__
+    fieldSub_opt_device(c_p, a, out);
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("fieldNeg: a=%llx:%llx:%llx:%llx, out=%llx:%llx:%llx:%llx\n",
+               a[0], a[1], a[2], a[3], out[0], out[1], out[2], out[3]);
+    }
+#else
+    fieldSub_opt_host(host_c_p, a, out);
+#endif
 }
 
 __host__ __device__ void pointSetInfinity(JacobianPoint &P) {

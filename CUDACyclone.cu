@@ -97,7 +97,12 @@ __global__ void test_constant_memory(unsigned long long* out, int batch_size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= batch_size / 2) return;
     for (int i = 0; i < 4; ++i) {
-        out[idx * 4 + i] = c_Gx[idx * 4 + i];
+        out[idx * 8 + i] = c_Gx[idx * 4 + i]; // Modified to store both x and y
+        out[idx * 8 + i + 4] = c_Gy[idx * 4 + i];
+    }
+    if (idx == 0 && threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("test_constant_memory: c_Gx[0]=%llx:%llx:%llx:%llx, c_Gy[0]=%llx:%llx:%llx:%llx\n",
+               c_Gx[0], c_Gx[1], c_Gx[2], c_Gx[3], c_Gy[0], c_Gy[1], c_Gy[2], c_Gy[3]);
     }
 }
 
@@ -192,8 +197,9 @@ __global__ void fused_ec_hash(
         int any_non_infinity = __syncthreads_count(!P_local.infinity);
         if (lane < B && !skip_inversion) {
             fieldCopy(P_local.z, z_values + lane * 4);
-            if (lane == 0) {
-                printf("Block %d, lane %d, writing z_values[0]=%llx\n", blockIdx.x, lane, z_values[0]);
+            if (lane == 0 && blockIdx.x == 0) {
+                printf("Block %d, lane %d, writing z_values[0]=%llx:%llx:%llx:%llx\n",
+                       blockIdx.x, lane, z_values[0], z_values[1], z_values[2], z_values[3]);
             }
         } else if (lane < B) {
             fieldSetZero(z_values + lane * 4);
@@ -201,7 +207,8 @@ __global__ void fused_ec_hash(
         __syncthreads();
         if (lane == 0 && any_non_infinity) {
             batch_modinv_fermat(z_values, z_values, B);
-            printf("Block %d, lane 0, after batch_modinv_fermat, z_values[0]=%llx\n", blockIdx.x, z_values[0]);
+            printf("Block %d, lane 0, after batch_modinv_fermat, z_values[0]=%llx:%llx:%llx:%llx\n",
+                   blockIdx.x, z_values[0], z_values[1], z_values[2], z_values[3]);
         }
         __syncthreads();
 
@@ -306,7 +313,7 @@ void precompute_g_table_gpu(JacobianPoint base, JacobianPoint phi_base, unsigned
     size_t free_mem, total_mem;
     CUDA_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
     if (free_mem < total_size + 1e9) { // Reserve ~1GB for other allocations
-        std::cerr << "Insufficient VRAM for 2^16 precomputed tables (~" << human_bytes(total_size) << ")\n";
+        std::cerr << "Insufficient VRAM for 2^" << PRECOMPUTE_WINDOW << " precomputed tables (~" << human_bytes(total_size) << ")\n";
         exit(EXIT_FAILURE);
     }
 
@@ -317,6 +324,11 @@ void precompute_g_table_gpu(JacobianPoint base, JacobianPoint phi_base, unsigned
 
     int threads = 256;
     int blocks = (PRECOMPUTE_SIZE + threads - 1) / threads;
+    // Debug base point before kernel launch
+    printf("precompute_g_table_gpu: base.x=%llx:%llx:%llx:%llx, base.y=%llx:%llx:%llx:%llx, base.infinity=%d\n",
+           base.x[0], base.x[1], base.x[2], base.x[3], base.y[0], base.y[1], base.y[2], base.y[3], base.infinity);
+    printf("precompute_g_table_gpu: phi_base.x=%llx:%llx:%llx:%llx, phi_base.y=%llx:%llx:%llx:%llx, phi_base.infinity=%d\n",
+           phi_base.x[0], phi_base.x[1], phi_base.x[2], phi_base.x[3], phi_base.y[0], phi_base.y[1], phi_base.y[2], phi_base.y[3], phi_base.infinity);
     precompute_table_kernel<<<blocks, threads>>>(base, *d_pre_Gx, *d_pre_Gy, PRECOMPUTE_SIZE);
     CUDA_CHECK(cudaDeviceSynchronize());
     std::cout << "precompute_table_kernel (Gx, Gy) completed" << std::endl;
@@ -438,12 +450,12 @@ int main(int argc, char* argv[]) {
         std::cout << "c_mu: " << std::hex << h_mu[0] << ":" << h_mu[1] << ":" << h_mu[2] << ":" << h_mu[3] << ":" << h_mu[4] << std::endl;
     }
 
-    // Initialize Gx_d and Gy_d with secp256k1 generator point
+    // Initialize Gx_d and Gy_d with correct secp256k1 generator point
     unsigned long long h_Gx_d[4] = {
-        0x59f2815bULL, 0x0ea3fe7fULL, 0x2e6ff0b0ULL, 0x79e81dc6ULL
+        0x9f2815b16f81798ULL, 0x29bfcdb2dce28d95ULL, 0x55a06295ce870b07ULL, 0x79be667ef9dcbbacULL
     };
     unsigned long long h_Gy_d[4] = {
-        0x4fe342e2ULL, 0xe0fa9e5bULL, 0x7c0cad3cULL, 0x9f07d8fbULL
+        0x9c47d08ffb10d4b8ULL, 0xfd17b448a6855419ULL, 0x5da4fbfc0e1108a8ULL, 0x483ada7726a3c465ULL
     };
     CUDA_CHECK(cudaMemcpyToSymbol(Gx_d, h_Gx_d, 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemcpyToSymbol(Gy_d, h_Gy_d, 4 * sizeof(unsigned long long)));
@@ -458,10 +470,10 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Batch size: " << batch_size << std::endl;
 
-    // Precompute tables (2^16 points)
+    // Precompute tables
     JacobianPoint h_base, h_phi_base;
-    fieldCopy(Gx_d, h_base.x);
-    fieldCopy(Gy_d, h_base.y);
+    fieldCopy(h_Gx_d, h_base.x); // Use host values directly
+    fieldCopy(h_Gy_d, h_base.y);
     fieldSetOne(h_base.z);
     h_base.infinity = false;
 
@@ -482,7 +494,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(d_beta));
     CUDA_CHECK(cudaFree(d_Gx_d));
     CUDA_CHECK(cudaFree(d_phi_base_x));
-    fieldCopy(Gy_d, h_phi_base.y);
+    fieldCopy(h_Gy_d, h_phi_base.y); // Use host Gy_d
     fieldSetOne(h_phi_base.z);
     h_phi_base.infinity = false;
 
@@ -500,21 +512,23 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaDeviceSynchronize());
     std::cout << "precompute_batch_points_kernel completed" << std::endl;
 
-    // Copy to constant memory before testing
+    // Test c_Gx and c_Gy
     CUDA_CHECK(cudaMemcpyToSymbol(c_Gx, d_Gx, batch_size * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemcpyToSymbol(c_Gy, d_Gy, batch_size * 4 * sizeof(unsigned long long)));
-
-    // Test c_Gx and c_Gy
     unsigned long long *d_test_out;
-    CUDA_CHECK(cudaMalloc(&d_test_out, (batch_size / 2) * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_test_out, (batch_size / 2) * 8 * sizeof(unsigned long long))); // Modified for x and y
     test_constant_memory<<<1, threads>>>(d_test_out, batch_size);
     CUDA_CHECK(cudaDeviceSynchronize());
     std::cout << "test_constant_memory completed" << std::endl;
-    unsigned long long h_test_out[batch_size / 2 * 4];
-    CUDA_CHECK(cudaMemcpy(h_test_out, d_test_out, (batch_size / 2) * 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    unsigned long long h_test_out[(batch_size / 2) * 8];
+    CUDA_CHECK(cudaMemcpy(h_test_out, d_test_out, (batch_size / 2) * 8 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaFree(d_test_out));
-    std::cout << "c_Gx[0]: " << std::hex << h_test_out[0] << std::endl;
-    std::cout << "c_Gx[1]: " << std::hex << h_test_out[1] << std::endl;
+    if (verbose) {
+        std::cout << "c_Gx[0]: " << std::hex << h_test_out[0] << ":" << h_test_out[1] << ":"
+                  << h_test_out[2] << ":" << h_test_out[3] << std::endl;
+        std::cout << "c_Gy[0]: " << std::hex << h_test_out[4] << ":" << h_test_out[5] << ":"
+                  << h_test_out[6] << ":" << h_test_out[7] << std::endl;
+    }
 
     CUDA_CHECK(cudaFree(d_Gx));
     CUDA_CHECK(cudaFree(d_Gy));
@@ -588,7 +602,7 @@ int main(int argc, char* argv[]) {
                   << h_P[0].x[2] << ":" << h_P[0].x[3] << std::endl;
         std::cout << "d_P[0].y: " << std::hex << h_P[0].y[0] << ":" << h_P[0].y[1] << ":"
                   << h_P[0].y[2] << ":" << h_P[0].y[3] << std::endl;
-        std::cout << "d_P[0].x[0]: " << std::hex << h_P[0].x[0] << std::endl;
+        std::cout << "d_P[0].infinity: " << h_P[0].infinity << std::endl; // Added debugging
     }
     CUDA_CHECK(cudaMemcpy(d_P, h_P, threadsTotal * sizeof(JacobianPoint), cudaMemcpyHostToDevice));
     delete[] h_P; delete[] h_outX; delete[] h_outY;
@@ -613,7 +627,7 @@ int main(int argc, char* argv[]) {
     while (!stop_all) {
         dim3 gridDim(blocks, 1, 1);
         dim3 blockDim(threadsPerBlock, 1, 1);
-        size_t sharedMem = (batch_size + 1) * 4 * sizeof(unsigned long long);
+        size_t sharedMem = batch_size * 4 * sizeof(unsigned long long) * 2; // Increased shared memory
         fused_ec_hash<<<gridDim, blockDim, sharedMem, streamKernel>>>(
             d_P, d_R, d_start_scalars, d_counts256, threadsTotal, batch_size,
             max_batches_per_launch, d_found_flag, d_found_result, d_hashes_accum, d_any_left
