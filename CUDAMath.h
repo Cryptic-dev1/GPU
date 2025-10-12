@@ -33,6 +33,7 @@ static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bi
 #define MADD(r, a, b, c) asm volatile ("madc.hi.u64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c))
 #define MADDS(r, a, b, c) asm volatile ("madc.hi.s64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c))
 
+// Constants
 __device__ __constant__ unsigned long long MM64 = 0xD838091DD2253531ULL;
 __device__ __constant__ unsigned long long MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 
@@ -156,7 +157,7 @@ __device__ void sub512(const unsigned long long a[8], const unsigned long long b
     }
 }
 
-// Host versions of field operations
+// Host Field Operations
 __host__ void fieldAdd_opt_host(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
     unsigned long long carry = 0, temp;
     #pragma unroll
@@ -204,7 +205,7 @@ __host__ void mul256_host(const unsigned long long a[4], const unsigned long lon
     for (int i = 0; i < 4; ++i) {
         carry = 0;
         #pragma unroll
-        for (int j = 0; j < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
             unsigned long long ai = a[i];
             unsigned long long bj = b[j];
             __uint128_t prod = (__uint128_t)ai * bj;
@@ -240,7 +241,7 @@ __host__ void mul_high_host(const unsigned long long a[4], const unsigned long l
             hi = (unsigned long long)(prod >> 64);
             unsigned long long sum = lo + carry;
             carry = (sum < lo) ? 1ULL : 0ULL;
-            unsigned long long prod_ij = *(temp_out + i + j);
+            unsigned long long prod_ij = *(temp_prod + i + j);
             *(temp_prod + i + j) = prod_ij + sum;
             carry += (*(temp_prod + i + j) < prod_ij) ? 1ULL : 0ULL;
             unsigned long long prod_ij1 = *(temp_prod + i + j + 1);
@@ -293,7 +294,7 @@ __host__ void fieldInvFermat_host(const unsigned long long a[4], unsigned long l
     fieldCopy(t, inv);
 }
 
-// Device versions of field operations
+// Device Field Operations
 __device__ void fieldAdd_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long out[4]) {
     unsigned long long carry = 0, temp;
     #pragma unroll
@@ -467,31 +468,12 @@ __device__ void fieldInvFermat_device(const unsigned long long a[4], unsigned lo
     }
 }
 
-__host__ __device__ void fieldNeg(const unsigned long long a[4], unsigned long long out[4]) {
-    if (isZero256(a)) {
-        fieldSetZero(out);
-        return;
-    }
-#ifdef __CUDA_ARCH__
-    fieldSub_opt_device(c_p, a, out);
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("fieldNeg: a=%llx:%llx:%llx:%llx, out=%llx:%llx:%llx:%llx\n",
-               a[0], a[1], a[2], a[3], out[0], out[1], out[2], out[3]);
-    }
-#else
-    fieldSub_opt_host(host_c_p, a, out);
-#endif
-}
-
 __device__ void batch_modinv_fermat(const unsigned long long* a, unsigned long long* inv, int n) {
     extern __shared__ unsigned long long shared_mem[];
     unsigned long long *prefix = shared_mem;
     unsigned long long prod[4], tmp[4];
     int tid = threadIdx.x % WARP_SIZE;
     if (tid == 0) {
-        if (threadIdx.x == 0 && blockIdx.x == 0) {
-            printf("batch_modinv_fermat: n=%d\n", n);
-        }
         fieldSetOne(prefix);
         bool all_zero = true;
         for (int i = 0; i < n; ++i) {
@@ -551,9 +533,8 @@ __device__ void div512_256(const unsigned long long num[8], const unsigned long 
     unsigned long long dividend[8], shifted_den[8], q[4] = {0};
     fieldCopy(num, dividend);
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("div512_256: num=%llx:%llx:%llx:%llx:%llx:%llx:%llx:%llx, den=%llx:%llx:%llx:%llx\n",
-               num[0], num[1], num[2], num[3], num[4], num[5], num[6], num[7],
-               den[0], den[1], den[2], den[3]);
+        printf("div512_256: num=%llx:%llx:%llx:%llx:%llx:%llx:%llx:%llx\n",
+               num[0], num[1], num[2], num[3], num[4], num[5], num[6], num[7]);
     }
     // Check if num < den
     bool num_smaller = true;
@@ -690,6 +671,7 @@ __device__ void split_glv(const unsigned long long scalar[4], unsigned long long
     }
 }
 
+// Jacobian Point Operations
 __host__ __device__ void fieldNeg(const unsigned long long a[4], unsigned long long out[4]) {
     if (isZero256(a)) {
         fieldSetZero(out);
@@ -785,21 +767,9 @@ __device__ void pointDoubleJacobian(const JacobianPoint &P, JacobianPoint &R) {
     fieldSub_opt_device(R.x, s, R.x);
     fieldSub_opt_device(R.x, s, R.x);
     fieldAdd_opt_device(P.y, P.z, R.z);
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("pointDoubleJacobian: R.z after P.y+P.z=%llx:%llx:%llx:%llx\n", R.z[0], R.z[1], R.z[2], R.z[3]);
-    }
     fieldSqr_opt_device(R.z, R.z);
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("pointDoubleJacobian: R.z after square=%llx:%llx:%llx:%llx\n", R.z[0], R.z[1], R.z[2], R.z[3]);
-    }
     fieldSub_opt_device(R.z, u, R.z);
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("pointDoubleJacobian: R.z after subtract u=%llx:%llx:%llx:%llx\n", R.z[0], R.z[1], R.z[2], R.z[3]);
-    }
     fieldSub_opt_device(R.z, zz, R.z);
-    if (threadIdx.x == 0 && blockIdx.x == 0 && isZero256(R.z)) {
-        printf("pointDoubleJacobian: WARNING: R.z became zero after subtract zz=%llx:%llx:%llx:%llx\n", zz[0], zz[1], zz[2], zz[3]);
-    }
     fieldSub_opt_device(s, R.x, tmp);
     fieldMul_opt_device(m, tmp, R.y);
     fieldAdd_opt_device(t, t, tmp);
@@ -884,15 +854,9 @@ __device__ void pointAddJacobian(const JacobianPoint &P, const JacobianPoint &Q,
     fieldSub_opt_device(R.y, tmp, R.y);
     fieldAdd_opt_device(P.z, Q.z, R.z);
     fieldSqr_opt_device(R.z, R.z);
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("pointAddJacobian: R.z after (P.z+Q.z)^2=%llx:%llx:%llx:%llx\n", R.z[0], R.z[1], R.z[2], R.z[3]);
-    }
     fieldSub_opt_device(R.z, z1z1, R.z);
     fieldSub_opt_device(R.z, z2z2, R.z);
     fieldMul_opt_device(R.z, h, R.z);
-    if (threadIdx.x == 0 && blockIdx.x == 0 && isZero256(R.z)) {
-        printf("pointAddJacobian: WARNING: R.z became zero after final mul\n");
-    }
     R.infinity = false;
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         printf("pointAddJacobian: output R.x=%llx:%llx:%llx:%llx, R.y=%llx:%llx:%llx:%llx, R.z=%llx:%llx:%llx:%llx, R.infinity=%d\n",
@@ -956,9 +920,6 @@ __device__ void pointAddMixed(const JacobianPoint &P, const unsigned long long Q
     fieldAdd_opt_device(tmp, tmp, tmp);
     fieldSub_opt_device(R.y, tmp, R.y);
     fieldMul_opt_device(P.z, h, R.z);
-    if (threadIdx.x == 0 && blockIdx.x == 0 && isZero256(R.z)) {
-        printf("pointAddMixed: WARNING: R.z became zero after mul\n");
-    }
     R.infinity = false;
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         printf("pointAddMixed: output R.x=%llx:%llx:%llx:%llx, R.y=%llx:%llx:%llx:%llx, R.z=%llx:%llx:%llx:%llx, R.infinity=%d\n",
@@ -1014,13 +975,35 @@ __device__ void scalarMulBaseJacobian(const unsigned long long scalar_le[4], uns
     JacobianPoint R1, R2, R;
     pointSetInfinity(R1);
     pointSetInfinity(R2);
-    if (isZero256(k1) && isZero256(k2)) {
-        pointSetInfinity(R);
-        pointToAffine(R, outX, outY);
-        if (threadIdx.x == 0 && blockIdx.x == 0) {
-            printf("scalarMulBaseJacobian: k1=0, k2=0, R set to infinity, outX=0:0:0:0, outY=0:0:0:0\n");
+    // Handle small k1 directly
+    if (k1[3] == 0 && k1[2] == 0 && k1[1] == 0 && k1[0] <= 0xFFFFFFFF) {
+        if (isZero256(k1)) {
+            pointSetInfinity(R);
+            if (threadIdx.x == 0 && blockIdx.x == 0) {
+                printf("scalarMulBaseJacobian: k1=0, R set to infinity\n");
+            }
+        } else {
+            pointSetG(R);
+            if (threadIdx.x == 0 && blockIdx.x == 0) {
+                printf("scalarMulBaseJacobian: small k1=%llx, starting R.x=%llx:%llx:%llx:%llx, R.y=%llx:%llx:%llx:%llx, R.z=%llx:%llx:%llx:%llx\n",
+                       k1[0], R.x[0], R.x[1], R.x[2], R.x[3], R.y[0], R.y[1], R.y[2], R.y[3], R.z[0], R.z[1], R.z[2], R.z[3]);
+            }
+            for (uint64_t i = 0; i < k1[0]; ++i) {
+                pointDoubleJacobian(R, R);
+                if (threadIdx.x == 0 && blockIdx.x == 0) {
+                    printf("scalarMulBaseJacobian: after double %llu, R.x=%llx:%llx:%llx:%llx, R.y=%llx:%llx:%llx:%llx, R.z=%llx:%llx:%llx:%llx\n",
+                           i+1, R.x[0], R.x[1], R.x[2], R.x[3], R.y[0], R.y[1], R.y[2], R.y[3], R.z[0], R.z[1], R.z[2], R.z[3]);
+                }
+            }
         }
-        return;
+        if (isZero256(k2)) {
+            pointToAffine(R, outX, outY);
+            if (threadIdx.x == 0 && blockIdx.x == 0) {
+                printf("scalarMulBaseJacobian: small k1=%llx, k2=0, final R.x=%llx:%llx:%llx:%llx, R.y=%llx:%llx:%llx:%llx, R.infinity=%d\n",
+                       k1[0], R.x[0], R.x[1], R.x[2], R.x[3], R.y[0], R.y[1], R.y[2], R.y[3], R.infinity);
+            }
+            return;
+        }
     }
     int msb1 = find_msb(k1);
     int msb2 = find_msb(k2);
@@ -1032,20 +1015,23 @@ __device__ void scalarMulBaseJacobian(const unsigned long long scalar_le[4], uns
         pointSetInfinity(R);
         pointToAffine(R, outX, outY);
         if (threadIdx.x == 0 && blockIdx.x == 0) {
-            printf("scalarMulBaseJacobian: msb<0, R set to infinity, outX=0:0:0:0, outY=0:0:0:0\n");
+            printf("scalarMulBaseJacobian: msb<0, R set to infinity\n");
         }
         return;
     }
     for (int pos = msb - (msb % PRECOMPUTE_WINDOW); pos >= 0; pos -= PRECOMPUTE_WINDOW) {
         if (threadIdx.x == 0 && blockIdx.x == 0) {
-            printf("scalarMulBaseJacobian: pos=%d, R1.x=%llx:%llx:%llx:%llx, R1.y=%llx:%llx:%llx:%llx, R1.z=%llx:%llx:%llx:%llx, R2.x=%llx:%llx:%llx:%llx, R2.y=%llx:%llx:%llx:%llx, R2.z=%llx:%llx:%llx:%llx\n",
-                   pos, R1.x[0], R1.x[1], R1.x[2], R1.x[3], R1.y[0], R1.y[1], R1.y[2], R1.y[3], R1.z[0], R1.z[1], R1.z[2], R1.z[3],
-                   R2.x[0], R2.x[1], R2.x[2], R2.x[3], R2.y[0], R2.y[1], R2.y[2], R2.y[3], R2.z[0], R2.z[1], R2.z[2], R2.z[3]);
+            printf("scalarMulBaseJacobian: pos=%d, R1.x=%llx:%llx:%llx:%llx, R2.x=%llx:%llx:%llx:%llx\n",
+                   pos, R1.x[0], R1.x[1], R1.x[2], R1.x[3], R2.x[0], R2.x[1], R2.x[2], R2.x[3]);
         }
         #pragma unroll
         for (int i = 0; i < PRECOMPUTE_WINDOW; ++i) {
             pointDoubleJacobian(R1, R1);
             pointDoubleJacobian(R2, R2);
+            if (threadIdx.x == 0 && blockIdx.x == 0) {
+                printf("scalarMulBaseJacobian: double %d, R1.x=%llx:%llx:%llx:%llx, R2.x=%llx:%llx:%llx:%llx\n",
+                       i, R1.x[0], R1.x[1], R1.x[2], R1.x[3], R2.x[0], R2.x[1], R2.x[2], R2.x[3]);
+            }
         }
         uint32_t w1 = get_window(k1, pos);
         if (w1 && w1 < PRECOMPUTE_SIZE) {
@@ -1076,8 +1062,8 @@ __device__ void scalarMulBaseJacobian(const unsigned long long scalar_le[4], uns
     }
     fieldMul_opt_device(R2.x, c_beta, R2.x);
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("scalarMulBaseJacobian: after beta mul, R2.x=%llx:%llx:%llx:%llx, R2.y=%llx:%llx:%llx:%llx, R2.z=%llx:%llx:%llx:%llx, R2.infinity=%d\n",
-               R2.x[0], R2.x[1], R2.x[2], R2.x[3], R2.y[0], R2.y[1], R2.y[2], R2.y[3], R2.z[0], R2.z[1], R2.z[2], R2.z[3], R2.infinity);
+        printf("scalarMulBaseJacobian: c_beta=%llx:%llx:%llx:%llx, after beta mul, R2.x=%llx:%llx:%llx:%llx, R2.infinity=%d\n",
+               c_beta[0], c_beta[1], c_beta[2], c_beta[3], R2.x[0], R2.x[1], R2.x[2], R2.x[3], R2.infinity);
     }
     pointAddJacobian(R1, R2, R);
     pointToAffine(R, outX, outY);
@@ -1109,6 +1095,11 @@ __global__ void scalarMulKernelBase(const unsigned long long* scalars_in, unsign
                idx, scalars_in[idx*4], scalars_in[idx*4+1], scalars_in[idx*4+2], scalars_in[idx*4+3]);
     }
     scalarMulBaseJacobian(scalars_in + idx*4, outX + idx*4, outY + idx*4, d_pre_Gx, d_pre_Gy, d_pre_phiGx, d_pre_phiGy);
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("scalarMulKernelBase: idx=%d, outX=%llx:%llx:%llx:%llx, outY=%llx:%llx:%llx:%llx\n",
+               idx, outX[idx*4], outX[idx*4+1], outX[idx*4+2], outX[idx*4+3],
+               outY[idx*4], outY[idx*4+1], outY[idx*4+2], outY[idx*4+3]);
+    }
 }
 
 __global__ void precompute_table_kernel(JacobianPoint base, unsigned long long* pre_x, unsigned long long* pre_y, unsigned long long size) {
@@ -1126,12 +1117,17 @@ __global__ void precompute_table_kernel(JacobianPoint base, unsigned long long* 
         } else {
             pointAddJacobian(P, base, P);
         }
+        if (threadIdx.x == 0 && blockIdx.x == 0) {
+            printf("precompute_table_kernel: bit=%llu, P.x=%llx:%llx:%llx:%llx, P.y=%llx:%llx:%llx:%llx\n",
+                   bit, P.x[0], P.x[1], P.x[2], P.x[3], P.y[0], P.y[1], P.y[2], P.y[3]);
+        }
     }
     fieldCopy(P.x, pre_x + idx * 4);
     fieldCopy(P.y, pre_y + idx * 4);
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("precompute_table_kernel: idx=%llu, P.x=%llx:%llx:%llx:%llx, P.y=%llx:%llx:%llx:%llx, P.z=%llx:%llx:%llx:%llx\n",
-               idx, P.x[0], P.x[1], P.x[2], P.x[3], P.y[0], P.y[1], P.y[2], P.y[3], P.z[0], P.z[1], P.z[2], P.z[3]);
+        printf("precompute_table_kernel: idx=%llu, pre_x=%llx:%llx:%llx:%llx, pre_y=%llx:%llx:%llx:%llx\n",
+               idx, pre_x[idx*4], pre_x[idx*4+1], pre_x[idx*4+2], pre_x[idx*4+3],
+               pre_y[idx*4], pre_y[idx*4+1], pre_y[idx*4+2], pre_y[idx*4+3]);
     }
 }
 
