@@ -160,8 +160,31 @@ __global__ void scalarMulKernelBase(
         }
         pointToAffine(R, outX + gid * 4, outY + gid * 4);
     } else {
-        // Existing code for precomputed table path (not shown for brevity)
         pointSetInfinity(R);
+        int msb_k1 = find_msb(k1);
+        int msb_k2 = find_msb(k2);
+        int max_msb = (msb_k1 > msb_k2) ? msb_k1 : msb_k2;
+        for (int i = max_msb; i >= 0; i -= PRECOMPUTE_WINDOW) {
+            for (int j = 0; j < PRECOMPUTE_WINDOW && i - j >= 0; ++j) {
+                pointDoubleJacobian(R, R);
+            }
+            int pos = i - PRECOMPUTE_WINDOW + 1;
+            if (pos < 0) pos = 0;
+            uint32_t window_k1 = get_window(k1, pos);
+            if (window_k1) {
+                unsigned long long Qx[4], Qy[4];
+                fieldCopy(d_pre_Gx + (window_k1 - 1) * 4, Qx);
+                fieldCopy(d_pre_Gy + (window_k1 - 1) * 4, Qy);
+                pointAddMixed(R, Qx, Qy, false, R);
+            }
+            uint32_t window_k2 = get_window(k2, pos);
+            if (window_k2) {
+                unsigned long long Qx[4], Qy[4];
+                fieldCopy(d_pre_phiGx + (window_k2 - 1) * 4, Qx);
+                fieldCopy(d_pre_phiGy + (window_k2 - 1) * 4, Qy);
+                pointAddMixed(R, Qx, Qy, false, R);
+            }
+        }
         pointToAffine(R, outX + gid * 4, outY + gid * 4);
     }
 
@@ -494,7 +517,7 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    // Parse grid
+    // Parse grid and debug
     if (!grid_str.empty()) {
         auto comma = grid_str.find(',');
         if (comma != std::string::npos) {
@@ -505,6 +528,9 @@ int main(int argc, char* argv[]) {
                 return EXIT_FAILURE;
             }
         }
+    }
+    if (verbose) {
+        std::cout << "Parsed grid: blocks=" << blocks << ", threadsPerBlock=" << threadsPerBlock << "\n";
     }
 
     // Validate batch size
