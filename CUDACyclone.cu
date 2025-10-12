@@ -107,7 +107,7 @@ __global__ void debug_test_write_kernel(unsigned long long* phi_x, unsigned long
 __global__ void compute_phi_base_kernel(unsigned long long* phi_x, unsigned long long* phi_y) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         unsigned long long temp[8];
-        fieldMul_opt_device(Gx_d, c_beta, temp);
+        fieldMul_opt_device(Gx_d, c_beta_fallback, temp);
         modred_barrett_opt_device(temp, phi_x);
         fieldCopy(Gy_d, phi_y);
     }
@@ -224,6 +224,8 @@ int main(int argc, char* argv[]) {
     // CUDA setup
     cudaDeviceProp prop;
     CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
+    // Override PRECOMPUTE_SIZE for testing
+    const unsigned long long PRECOMPUTE_SIZE_LOCAL = 1ULL << 10; // 1024 points
     if (verbose) {
         std::cout << "======== PrePhase: GPU Information ====================\n";
         std::cout << "Device               : " << prop.name << " (compute " << prop.major << "." << prop.minor << ")\n";
@@ -231,9 +233,9 @@ int main(int argc, char* argv[]) {
         std::cout << "ThreadsPerBlock      : " << threadsPerBlock << "\n";
         std::cout << "Blocks               : " << blocks << "\n";
         std::cout << "Points batch size    : " << MAX_BATCH_SIZE << "\n";
-        std::cout << "Precomputed tables    : 2^" << PRECOMPUTE_WINDOW << " points (~" << (PRECOMPUTE_SIZE * 8 * 2 / 1024.0 / 1024.0) << " MB)\n";
-        std::cout << "Memory utilization   : " << std::fixed << std::setprecision(1) << (PRECOMPUTE_SIZE * 8 * 2 * 100.0 / prop.totalGlobalMem) << "% ("
-                  << human_bytes(PRECOMPUTE_SIZE * 8 * 2) << " / " << human_bytes(prop.totalGlobalMem) << ")\n";
+        std::cout << "Precomputed tables    : 2^10 points (~" << (PRECOMPUTE_SIZE_LOCAL * 8 * 2 / 1024.0 / 1024.0) << " MB)\n";
+        std::cout << "Memory utilization   : " << std::fixed << std::setprecision(1) << (PRECOMPUTE_SIZE_LOCAL * 8 * 2 * 100.0 / prop.totalGlobalMem) << "% ("
+                  << human_bytes(PRECOMPUTE_SIZE_LOCAL * 8 * 2) << " / " << human_bytes(prop.totalGlobalMem) << ")\n";
         std::cout << "-------------------------------------------------------\n";
         std::cout << "Total threads        : " << (blocks * threadsPerBlock) << "\n";
     }
@@ -265,10 +267,10 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMalloc(&d_found_result, sizeof(FoundResult)));
     CUDA_CHECK(cudaMalloc(&d_hashes_accum, sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_any_left, sizeof(unsigned int)));
-    CUDA_CHECK(cudaMalloc(&d_pre_Gx_local, PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_pre_Gy_local, PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_pre_phiGx_local, PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_pre_phiGy_local, PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_pre_Gx_local, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_pre_Gy_local, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_pre_phiGx_local, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_pre_phiGy_local, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
 
     // Initialize memory
     CUDA_CHECK(cudaMemset(d_counts256, 0, sizeof(unsigned long long)));
@@ -277,10 +279,10 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemset(d_any_left, 0, sizeof(unsigned int)));
     CUDA_CHECK(cudaMemset(d_P, 0, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMemset(d_R, 0, MAX_BATCH_SIZE * 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_pre_Gx_local, 0, PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_pre_Gy_local, 0, PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_pre_phiGx_local, 0, PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_pre_phiGy_local, 0, PRECOMPUTE_SIZE * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_pre_Gx_local, 0, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_pre_Gy_local, 0, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_pre_phiGx_local, 0, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_pre_phiGy_local, 0, PRECOMPUTE_SIZE_LOCAL * 4 * sizeof(unsigned long long)));
 
     // Set constants
     CUDA_CHECK(cudaMemcpyToSymbol(c_target_hash160, target_hash160, 20 * sizeof(uint8_t)));
@@ -343,10 +345,38 @@ int main(int argc, char* argv[]) {
     fieldSetZero(base.z);
     base.z[0] = 1ULL;
     base.infinity = false;
-    int precompute_blocks = (PRECOMPUTE_SIZE + threadsPerBlock - 1) / threadsPerBlock;
-    precompute_table_kernel<<<precompute_blocks, threadsPerBlock>>>(base, d_pre_Gx_local, d_pre_Gy_local, PRECOMPUTE_SIZE);
+    // Validate base point
+    if (isZero256(base.x) || isZero256(base.y)) {
+        std::cerr << "Error: base point initialization failed\n";
+        CUDA_CHECK(cudaFree(d_phi_x));
+        CUDA_CHECK(cudaFree(d_phi_y));
+        CUDA_CHECK(cudaFree(d_start_scalars));
+        CUDA_CHECK(cudaFree(d_counts256));
+        CUDA_CHECK(cudaFree(d_P));
+        CUDA_CHECK(cudaFree(d_R));
+        CUDA_CHECK(cudaFree(d_found_flag));
+        CUDA_CHECK(cudaFree(d_found_result));
+        CUDA_CHECK(cudaFree(d_hashes_accum));
+        CUDA_CHECK(cudaFree(d_any_left));
+        CUDA_CHECK(cudaFree(d_pre_Gx_local));
+        CUDA_CHECK(cudaFree(d_pre_Gy_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGx_local));
+        CUDA_CHECK(cudaFree(d_pre_phiGy_local));
+        return EXIT_FAILURE;
+    }
+    int precompute_blocks = (PRECOMPUTE_SIZE_LOCAL + threadsPerBlock - 1) / threadsPerBlock;
+    precompute_table_kernel<<<precompute_blocks, threadsPerBlock>>>(base, d_pre_Gx_local, d_pre_Gy_local, PRECOMPUTE_SIZE_LOCAL);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
+
+    // Debug: Check first few precomputed points
+    unsigned long long h_pre_Gx[4], h_pre_Gy[4];
+    CUDA_CHECK(cudaMemcpy(h_pre_Gx, d_pre_Gx_local, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_pre_Gy, d_pre_Gy_local, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    if (verbose) {
+        std::cout << "First precomputed Gx: " << CryptoUtils::formatHex256(h_pre_Gx) << "\n";
+        std::cout << "First precomputed Gy: " << CryptoUtils::formatHex256(h_pre_Gy) << "\n";
+    }
 
     JacobianPoint phi_base;
     CUDA_CHECK(cudaMemcpy(phi_base.x, d_phi_x, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
@@ -373,7 +403,7 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaFree(d_pre_phiGy_local));
         return EXIT_FAILURE;
     }
-    precompute_table_kernel<<<precompute_blocks, threadsPerBlock>>>(phi_base, d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE);
+    precompute_table_kernel<<<precompute_blocks, threadsPerBlock>>>(phi_base, d_pre_phiGx_local, d_pre_phiGy_local, PRECOMPUTE_SIZE_LOCAL);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 

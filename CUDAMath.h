@@ -36,6 +36,9 @@ static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bi
 // Constants
 __device__ __constant__ unsigned long long MM64 = 0xD838091DD2253531ULL;
 __device__ __constant__ unsigned long long MSK62 = 0x3FFFFFFFFFFFFFFFULL;
+__device__ __constant__ unsigned long long c_beta_fallback[4] = {
+    0x719501eeULL, 0xc1396c28ULL, 0x12f58995ULL, 0x9cf04975ULL
+};
 
 // Host-side copy of c_p
 static const unsigned long long host_c_p[4] = {0xfffffc2fULL, 0xffffffffULL, 0xffffffffULL, 0xffffffffULL};
@@ -296,7 +299,9 @@ __global__ void precompute_table_kernel(JacobianPoint base, unsigned long long* 
     unsigned long long idx = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
     JacobianPoint P = base;
-    for (unsigned long long bit = 0; bit < idx && bit < size; ++bit) {
+    // Limit iterations for debugging
+    unsigned long long max_bits = min(256ULL, size);
+    for (unsigned long long bit = 0; bit < idx && bit < max_bits; ++bit) {
         if (bit % 2 == 0) {
             pointDoubleJacobian(P, P);
         } else {
