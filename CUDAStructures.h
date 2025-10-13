@@ -35,7 +35,7 @@ __device__ __constant__ unsigned long long c_Gy[(MAX_BATCH_SIZE/2) * 4];
 // secp256k1 constants (little-endian)
 __device__ __constant__ unsigned long long c_p[4] = {0xfffffc2fULL, 0xffffffffULL, 0xffffffffULL, 0xffffffffULL};
 __device__ __constant__ unsigned long long c_n[4] = {0xd0364141ULL, 0xbaaedce6ULL, 0xfffffffeULL, 0xffffffffULL};
-__device__ __constant__ unsigned long long c_beta[4] = {0x6b3c4f7eULL, 0x8de6997dULL, 0x7cf27b18ULL, 0x00000000ULL};
+__device__ __constant__ unsigned long long c_beta[4] = {0x719501eeULL, 0xc1396c28ULL, 0x12f58995ULL, 0x9cf04975ULL};
 __device__ __constant__ unsigned long long c_mu[5] = {0x1000003d1ULL, 0ULL, 0ULL, 0ULL, 1ULL};
 
 // GLV coefficients (precomputed, little-endian)
