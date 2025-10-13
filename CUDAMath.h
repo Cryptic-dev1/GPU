@@ -122,11 +122,20 @@ __host__ void fieldMul_host(const unsigned long long a[4], const unsigned long l
             __uint128_t prod = (__uint128_t)a[i] * b[j];
             unsigned long long lo = (unsigned long long)prod;
             unsigned long long hi = (unsigned long long)(prod >> 64);
-            unsigned long long sum = temp[i + j] + lo + carry;
+            // Add low part to temp[i + j]
+            unsigned long long sum = temp[i + j] + lo;
+            unsigned long long carry_lo = (sum < temp[i + j] || sum < lo) ? 1ULL : 0ULL;
             temp[i + j] = sum;
-            carry = hi + (sum < lo || (sum == lo && carry));
+            // Add high part and carry to temp[i + j + 1]
+            carry = hi + carry_lo + carry;
+            if (i + j + 1 < 8) {
+                temp[i + j + 1] += carry;
+                carry = (temp[i + j + 1] < carry) ? 1ULL : 0ULL;
+            }
         }
-        temp[i + 4] += carry;
+        if (i + 4 < 8) {
+            temp[i + 4] += carry;
+        }
     }
     for (int i = 0; i < 8; ++i) c[i] = temp[i];
 }
@@ -136,15 +145,23 @@ __host__ void fieldSqr_host(const unsigned long long a[4], unsigned long long c[
 }
 
 __host__ void modred_barrett_host(const unsigned long long in[8], unsigned long long out[4]) {
-    unsigned long long q[5], tmp[8];
-    fieldMul_host(in + 4, host_c_mu, q); // q = (in >> 256) * mu
-    fieldMul_host(q, host_c_p, tmp); // tmp = q * p
-    fieldSub_host(in, tmp, out); // out = in - q * p
-    while (ge256(out, host_c_p)) {
-        fieldSub_host(out, host_c_p, out);
-    }
-    if (_IsNegative(out)) {
-        fieldAdd_host(out, host_c_p, out);
+    unsigned long long q[8], tmp[8], q_low[4];
+    // Compute q = (in >> 256) * mu
+    fieldCopy(in + 4, q_low);
+    fieldMul_host(q_low, host_c_mu, q);
+    // Take the high 256 bits of q
+    fieldCopy(q + 4, q_low);
+    // Compute tmp = q * p
+    fieldMul_host(q_low, host_c_p, tmp);
+    // Subtract: out = in - tmp
+    fieldSub_host(in, tmp, out);
+    // Ensure result is in [0, p)
+    while (ge256(out, host_c_p) || _IsNegative(out)) {
+        if (_IsNegative(out)) {
+            fieldAdd_host(out, host_c_p, out);
+        } else {
+            fieldSub_host(out, host_c_p, out);
+        }
     }
 }
 
