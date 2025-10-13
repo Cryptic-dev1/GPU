@@ -123,18 +123,18 @@ __host__ void fieldMul_host(const unsigned long long a[4], const unsigned long l
             unsigned long long lo = (unsigned long long)prod;
             unsigned long long hi = (unsigned long long)(prod >> 64);
             // Add low part to temp[i + j]
-            unsigned long long sum = temp[i + j] + lo;
-            unsigned long long carry_lo = (sum < temp[i + j] || sum < lo) ? 1ULL : 0ULL;
-            temp[i + j] = sum;
-            // Add high part and carry to temp[i + j + 1]
-            carry = hi + carry_lo + carry;
-            if (i + j + 1 < 8) {
-                temp[i + j + 1] += carry;
-                carry = (temp[i + j + 1] < carry) ? 1ULL : 0ULL;
-            }
+            unsigned long long sum_lo = temp[i + j] + lo;
+            unsigned long long carry_lo = (sum_lo < temp[i + j] || sum_lo < lo) ? 1ULL : 0ULL;
+            temp[i + j] = sum_lo;
+            // Add high part to temp[i + j + 1]
+            unsigned long long sum_hi = temp[i + j + 1] + hi + carry_lo + carry;
+            carry = (sum_hi < hi || (sum_hi == hi && (carry_lo || carry))) ? 1ULL : 0ULL;
+            temp[i + j + 1] = sum_hi;
         }
-        if (i + 4 < 8) {
-            temp[i + 4] += carry;
+        // Propagate any remaining carry
+        for (int k = i + 4; k < 8 && carry; ++k) {
+            temp[k] += carry;
+            carry = (temp[k] < carry) ? 1ULL : 0ULL;
         }
     }
     for (int i = 0; i < 8; ++i) c[i] = temp[i];
@@ -145,17 +145,13 @@ __host__ void fieldSqr_host(const unsigned long long a[4], unsigned long long c[
 }
 
 __host__ void modred_barrett_host(const unsigned long long in[8], unsigned long long out[4]) {
-    unsigned long long q[8], tmp[8], q_low[4];
-    // Compute q = (in >> 256) * mu
-    fieldCopy(in + 4, q_low);
-    fieldMul_host(q_low, host_c_mu, q);
-    // Take the high 256 bits of q
-    fieldCopy(q + 4, q_low);
-    // Compute tmp = q * p
-    fieldMul_host(q_low, host_c_p, tmp);
-    // Subtract: out = in - tmp
-    fieldSub_host(in, tmp, out);
-    // Ensure result is in [0, p)
+    unsigned long long q[8], r[4], tmp[8];
+    // Step 1: Compute q = floor(in / p) using Barrett reduction
+    fieldMul_host(in + 4, host_c_mu, q); // q = (in >> 256) * mu
+    fieldCopy(q + 4, r); // Take high 256 bits of q
+    fieldMul_host(r, host_c_p, tmp); // tmp = q * p
+    fieldSub_host(in, tmp, out); // out = in - q * p
+    // Step 2: Ensure result is in [0, p)
     while (ge256(out, host_c_p) || _IsNegative(out)) {
         if (_IsNegative(out)) {
             fieldAdd_host(out, host_c_p, out);
