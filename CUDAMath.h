@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+#include <iostream>
+#include <iomanip>
 #include "CUDAStructures.h"
 #include "CUDAUtils.h"
 
@@ -33,6 +35,15 @@ static_assert(sizeof(unsigned long long) == 8, "unsigned long long must be 64 bi
 #define MADDC(r, a, b, c) asm volatile ("madc.hi.cc.u64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c) : "memory")
 #define MADD(r, a, b, c) asm volatile ("madc.hi.u64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c))
 #define MADDS(r, a, b, c) asm volatile ("madc.hi.s64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c))
+
+// Debug macro for host-side printing
+#define DEBUG_PRINT_256(label, arr, size) do { \
+    std::cout << label << ": "; \
+    for (int i = size - 1; i >= 0; --i) { \
+        std::cout << std::hex << std::setw(16) << std::setfill('0') << arr[i]; \
+    } \
+    std::cout << std::dec << std::endl; \
+} while (0)
 
 // Constants
 __device__ __constant__ unsigned long long MM64 = 0xD838091DD2253531ULL;
@@ -96,19 +107,40 @@ __host__ void fieldAdd_host(const unsigned long long a[4], const unsigned long l
     }
 }
 
-__host__ void fieldSub_host(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
+__host__ void fieldSub_host(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4], bool debug = false) {
+    if (debug) {
+        DEBUG_PRINT_256("fieldSub_host input a", a, 4);
+        DEBUG_PRINT_256("fieldSub_host input b", b, 4);
+    }
     unsigned long long borrow = 0;
     for (int i = 0; i < 4; ++i) {
         unsigned long long diff = a[i] - b[i] - borrow;
         c[i] = diff;
         borrow = (diff > a[i] || (diff == a[i] && borrow)) ? 1ULL : 0ULL;
+        if (debug) {
+            std::cout << "fieldSub_host limb[" << i << "] diff: " << std::hex << std::setw(16) << std::setfill('0') << diff
+                      << ", borrow: " << borrow << std::dec << std::endl;
+        }
     }
     if (borrow) {
+        if (debug) {
+            DEBUG_PRINT_256("fieldSub_host before correction", c, 4);
+        }
         add256(c, host_c_p, c); // Use add256 from CUDAUtils.h
+        if (debug) {
+            DEBUG_PRINT_256("fieldSub_host after correction", c, 4);
+        }
+    }
+    if (debug) {
+        DEBUG_PRINT_256("fieldSub_host output c", c, 4);
     }
 }
 
-__host__ void fieldMul_host(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[8]) {
+__host__ void fieldMul_host(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[8], bool debug = false) {
+    if (debug) {
+        DEBUG_PRINT_256("fieldMul_host input a", a, 4);
+        DEBUG_PRINT_256("fieldMul_host input b", b, 4);
+    }
     unsigned long long temp[8] = {0};
     for (int i = 0; i < 4; ++i) {
         unsigned long long carry = 0;
@@ -122,17 +154,36 @@ __host__ void fieldMul_host(const unsigned long long a[4], const unsigned long l
             unsigned long long sum_hi = temp[i + j + 1] + hi + carry_lo;
             carry = (sum_hi < hi || (sum_hi == hi && carry_lo)) ? 1ULL : 0ULL;
             temp[i + j + 1] = sum_hi;
+            if (debug) {
+                std::cout << "fieldMul_host i=" << i << ", j=" << j
+                          << ", prod: " << std::hex << std::setw(16) << std::setfill('0') << lo
+                          << std::setw(16) << hi
+                          << ", sum_lo: " << std::setw(16) << sum_lo
+                          << ", carry_lo: " << carry_lo
+                          << ", sum_hi: " << std::setw(16) << sum_hi
+                          << ", carry: " << carry << std::dec << std::endl;
+            }
             for (int k = i + j + 2; k < 8 && carry; ++k) {
                 temp[k] += carry;
                 carry = (temp[k] < carry) ? 1ULL : 0ULL;
+                if (debug && carry) {
+                    std::cout << "fieldMul_host propagate carry to limb[" << k << "]: " << std::hex
+                              << std::setw(16) << std::setfill('0') << temp[k] << std::dec << std::endl;
+                }
             }
         }
     }
     for (int i = 0; i < 8; ++i) c[i] = temp[i];
+    if (debug) {
+        DEBUG_PRINT_256("fieldMul_host output c", c, 8);
+    }
 }
 
-// Specialized 4x5 multiplication for Barrett reduction
-__host__ void fieldMul_host_4x5(const unsigned long long a[4], const unsigned long long b[5], unsigned long long c[9]) {
+__host__ void fieldMul_host_4x5(const unsigned long long a[4], const unsigned long long b[5], unsigned long long c[9], bool debug = false) {
+    if (debug) {
+        DEBUG_PRINT_256("fieldMul_host_4x5 input a", a, 4);
+        DEBUG_PRINT_256("fieldMul_host_4x5 input b", b, 5);
+    }
     unsigned long long temp[9] = {0};
     for (int i = 0; i < 4; ++i) {
         unsigned long long carry = 0;
@@ -146,36 +197,79 @@ __host__ void fieldMul_host_4x5(const unsigned long long a[4], const unsigned lo
             unsigned long long sum_hi = temp[i + j + 1] + hi + carry_lo;
             carry = (sum_hi < hi || (sum_hi == hi && carry_lo)) ? 1ULL : 0ULL;
             temp[i + j + 1] = sum_hi;
+            if (debug) {
+                std::cout << "fieldMul_host_4x5 i=" << i << ", j=" << j
+                          << ", prod: " << std::hex << std::setw(16) << std::setfill('0') << lo
+                          << std::setw(16) << hi
+                          << ", sum_lo: " << std::setw(16) << sum_lo
+                          << ", carry_lo: " << carry_lo
+                          << ", sum_hi: " << std::setw(16) << sum_hi
+                          << ", carry: " << carry << std::dec << std::endl;
+            }
             for (int k = i + j + 2; k < 9 && carry; ++k) {
                 temp[k] += carry;
                 carry = (temp[k] < carry) ? 1ULL : 0ULL;
+                if (debug && carry) {
+                    std::cout << "fieldMul_host_4x5 propagate carry to limb[" << k << "]: " << std::hex
+                              << std::setw(16) << std::setfill('0') << temp[k] << std::dec << std::endl;
+                }
             }
         }
     }
     for (int i = 0; i < 9; ++i) c[i] = temp[i];
+    if (debug) {
+        DEBUG_PRINT_256("fieldMul_host_4x5 output c", c, 9);
+    }
 }
 
-__host__ void fieldSqr_host(const unsigned long long a[4], unsigned long long c[8]) {
-    fieldMul_host(a, a, c);
+__host__ void fieldSqr_host(const unsigned long long a[4], unsigned long long c[8], bool debug = false) {
+    fieldMul_host(a, a, c, debug);
 }
 
-__host__ void modred_barrett_host(const unsigned long long in[8], unsigned long long out[4]) {
+__host__ void modred_barrett_host(const unsigned long long in[8], unsigned long long out[4], bool debug = false) {
+    if (debug) {
+        DEBUG_PRINT_256("modred_barrett_host input in", in, 8);
+    }
     unsigned long long q[9], r[4], tmp[8];
     // Step 1: Compute q = floor(in / 2^256) * mu
-    fieldMul_host_4x5(in + 4, host_c_mu, q);
+    fieldMul_host_4x5(in + 4, host_c_mu, q, debug);
+    if (debug) {
+        DEBUG_PRINT_256("modred_barrett_host q", q, 9);
+    }
     // Step 2: Take high 256 bits of q
-    fieldCopy(q + 5, r);
+    fieldCopy(q + 4, r);
+    if (debug) {
+        DEBUG_PRINT_256("modred_barrett_host r (q high 256)", r, 4);
+    }
     // Step 3: Compute tmp = q * p
-    fieldMul_host(r, host_c_p, tmp);
+    fieldMul_host(r, host_c_p, tmp, debug);
+    if (debug) {
+        DEBUG_PRINT_256("modred_barrett_host tmp", tmp, 8);
+    }
     // Step 4: Compute out = in - tmp
-    fieldSub_host(in, tmp, out);
+    fieldSub_host(in, tmp, out, debug);
+    if (debug) {
+        DEBUG_PRINT_256("modred_barrett_host out before final reduction", out, 4);
+    }
     // Step 5: Ensure result is in [0, p)
     while (_IsNegative(out) || ge256(out, host_c_p)) {
         if (_IsNegative(out)) {
+            if (debug) {
+                std::cout << "modred_barrett_host: negative result, adding p\n";
+            }
             add256(out, host_c_p, out);
         } else {
-            fieldSub_host(out, host_c_p, out);
+            if (debug) {
+                std::cout << "modred_barrett_host: result >= p, subtracting p\n";
+            }
+            fieldSub_host(out, host_c_p, out, debug);
         }
+        if (debug) {
+            DEBUG_PRINT_256("modred_barrett_host out after reduction step", out, 4);
+        }
+    }
+    if (debug) {
+        DEBUG_PRINT_256("modred_barrett_host final out", out, 4);
     }
 }
 
@@ -201,7 +295,7 @@ __device__ void fieldAdd_opt_device(const unsigned long long a[4], const unsigne
     }
 }
 
-__device__ void fieldSub_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
+__ device's void fieldSub_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
     unsigned long long borrow = 0;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
@@ -419,14 +513,32 @@ __host__ __device__ bool ge256_u64(const unsigned long long a[4], unsigned long 
 }
 
 // Curve validation function (y^2 = x^3 + 7 mod p)
-__host__ bool isPointOnCurve(const unsigned long long x[4], const unsigned long long y[4]) {
+__host__ bool isPointOnCurve(const unsigned long long x[4], const unsigned long long y[4], bool debug = false) {
     unsigned long long y2[8], x3[8], seven[4] = {7ULL, 0ULL, 0ULL, 0ULL}, temp[8], result[4], x3_plus_7[4];
-    fieldSqr_host(y, y2);
-    modred_barrett_host(y2, result); // y^2 mod p
-    fieldSqr_host(x, temp);
-    fieldMul_host(temp, x, x3); // x^3
-    modred_barrett_host(x3, x3_plus_7);
-    fieldAdd_host(x3_plus_7, seven, x3_plus_7); // x^3 + 7 mod p
+    fieldSqr_host(y, y2, debug);
+    if (debug) {
+        DEBUG_PRINT_256("isPointOnCurve y^2", y2, 8);
+    }
+    modred_barrett_host(y2, result, debug);
+    if (debug) {
+        DEBUG_PRINT_256("isPointOnCurve y^2 mod p", result, 4);
+    }
+    fieldSqr_host(x, temp, debug);
+    if (debug) {
+        DEBUG_PRINT_256("isPointOnCurve x^2", temp, 8);
+    }
+    fieldMul_host(temp, x, x3, debug);
+    if (debug) {
+        DEBUG_PRINT_256("isPointOnCurve x^3", x3, 8);
+    }
+    modred_barrett_host(x3, x3_plus_7, debug);
+    if (debug) {
+        DEBUG_PRINT_256("isPointOnCurve x^3 mod p", x3_plus_7, 4);
+    }
+    fieldAdd_host(x3_plus_7, seven, x3_plus_7);
+    if (debug) {
+        DEBUG_PRINT_256("isPointOnCurve x^3 + 7 mod p", x3_plus_7, 4);
+    }
     return _IsEqual(result, x3_plus_7);
 }
 
@@ -434,11 +546,11 @@ __host__ bool isPointOnCurve(const unsigned long long x[4], const unsigned long 
 __device__ bool isPointOnCurve_device(const unsigned long long x[4], const unsigned long long y[4]) {
     unsigned long long y2[8], x3[8], seven[4] = {7ULL, 0ULL, 0ULL, 0ULL}, temp[8], result[4], x3_plus_7[4];
     fieldSqr_opt_device(y, y2);
-    modred_barrett_opt_device(y2, result); // y^2 mod p
+    modred_barrett_opt_device(y2, result);
     fieldSqr_opt_device(x, temp);
-    fieldMul_opt_device(temp, x, x3); // x^3
+    fieldMul_opt_device(temp, x, x3);
     modred_barrett_opt_device(x3, x3_plus_7);
-    fieldAdd_opt_device(x3_plus_7, seven, x3_plus_7); // x^3 + 7 mod p
+    fieldAdd_opt_device(x3_plus_7, seven, x3_plus_7);
     return _IsEqual(result, x3_plus_7);
 }
 
@@ -466,11 +578,11 @@ __global__ void debug_field_arithmetic_kernel(unsigned long long* result, int* v
         unsigned long long y[4] = {0xfb10d4b8ULL, 0x9c47d08fULL, 0xa6855419ULL, 0x483ada77ULL}; // Gy_d
         unsigned long long y2[8], x3[8], seven[4] = {7ULL, 0ULL, 0ULL, 0ULL}, temp[8], result_y2[4], x3_plus_7[4];
         fieldSqr_opt_device(y, y2);
-        modred_barrett_opt_device(y2, result_y2); // y^2 mod p
+        modred_barrett_opt_device(y2, result_y2);
         fieldSqr_opt_device(x, temp);
-        fieldMul_opt_device(temp, x, x3); // x^3
+        fieldMul_opt_device(temp, x, x3);
         modred_barrett_opt_device(x3, x3_plus_7);
-        fieldAdd_opt_device(x3_plus_7, seven, x3_plus_7); // x^3 + 7 mod p
+        fieldAdd_opt_device(x3_plus_7, seven, x3_plus_7);
         *valid = _IsEqual(result_y2, x3_plus_7);
         fieldCopy(result_y2, result);
         fieldCopy(x3_plus_7, result + 4);
