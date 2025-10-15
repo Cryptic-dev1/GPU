@@ -295,7 +295,7 @@ __device__ void fieldAdd_opt_device(const unsigned long long a[4], const unsigne
     }
 }
 
-__ device's void fieldSub_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
+__device's void fieldSub_opt_device(const unsigned long long a[4], const unsigned long long b[4], unsigned long long c[4]) {
     unsigned long long borrow = 0;
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
